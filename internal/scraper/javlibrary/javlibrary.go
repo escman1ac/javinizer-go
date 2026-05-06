@@ -775,36 +775,8 @@ func (s *Scraper) extractScreenshotURLs(html string) []string {
 	return screenshotURLs
 }
 
-// extractTrailerURL extracts the trailer/sample video URL
-func (s *Scraper) extractTrailerURL(html string) string {
-	// Look for video source tags with sample/trailer context
-	re := regexp.MustCompile(`src="([^"]*sample[^"]*\.mp4[^"]*)"`)
-	matches := re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-
-	// Look for video tag with sample context
-	re = regexp.MustCompile(`<video[^>]*src="([^"]+)"[^>]*>[^<]*sample`)
-	matches = re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-
-	// Look for a href with mp4 in sample_movie or similar
-	re = regexp.MustCompile(`href="([^"]*sample_movie[^"]*\.mp4[^"]*)"`)
-	matches = re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-
-	// Fallback: any mp4 URL in a sample context
-	re = regexp.MustCompile(`href="([^"]*\.mp4[^"]*)"`)
-	matches = re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-
+// extractTrailerURL always returns empty — JavLibrary no longer hosts trailer/sample videos.
+func (s *Scraper) extractTrailerURL(_ string) string {
 	return ""
 }
 
