@@ -8,11 +8,12 @@
 	interface Props {
 		items: string[];
 		onReorder?: (items: string[]) => void;
+		onRemove?: (index: number) => void;
 		disabled?: boolean;
 		children?: Snippet<[{ item: string; index: number }]>;
 	}
 
-	let { items = $bindable(), onReorder, disabled = false, children }: Props = $props();
+	let { items = $bindable(), onReorder, onRemove, disabled = false, children }: Props = $props();
 
 	let draggedIndex = $state<number | null>(null);
 	let dragOverIndex = $state<number | null>(null);
@@ -121,6 +122,16 @@
 					>
 						↓
 					</button>
+					{#if onRemove}
+						<button
+							type="button"
+							onclick={() => onRemove!(index)}
+							class="px-2 py-1 text-sm rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground"
+							aria-label="Remove"
+						>
+							×
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>

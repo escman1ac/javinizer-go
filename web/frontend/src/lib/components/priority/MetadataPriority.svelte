@@ -2,6 +2,7 @@
 	import { cubicOut } from 'svelte/easing';
 	import { fade, fly, slide } from 'svelte/transition';
 	import { X, Info } from 'lucide-svelte';
+	import { browser } from '$app/environment';
 	import { portalToBody } from '$lib/actions/portal';
 	import { confirmDialog } from '$lib/stores/dialog.svelte';
 	import Card from '../ui/Card.svelte';
@@ -18,8 +19,15 @@
 
 	let { config, onUpdate, onScraperUsageQuery }: Props = $props();
 
+	const MODE_STORAGE_KEY = 'metadataPriorityMode';
 	type PriorityMode = 'simple' | 'advanced';
-	let mode = $state<PriorityMode>('simple');
+	let mode = $state<PriorityMode>(
+		browser && localStorage.getItem(MODE_STORAGE_KEY) === 'advanced' ? 'advanced' : 'simple'
+	);
+
+	$effect(() => {
+		if (browser) localStorage.setItem(MODE_STORAGE_KEY, mode);
+	});
 	let showOnlyOverrides = $state(false);
 	let editingField = $state<string | null>(null);
 	let editingPriority = $state<string[]>([]);
@@ -69,30 +77,24 @@
 		return name;
 	}
 
-	// Helper to get field priority (either custom or global)
-	// Empty arrays mean "use global", same as undefined
-	function getFieldPriority(fieldKey: string): string[] {
-		const fieldConfig = config?.metadata?.priority?.[fieldKey];
-		// If field config is undefined, null, or empty array, use global priority
-		if (!fieldConfig || fieldConfig.length === 0) {
-			return getGlobalPriority();
-		}
-		return fieldConfig;
+	function isDefaultSentinel(arr: string[] | undefined | null): boolean {
+		return !arr || (arr.length === 1 && arr[0] === 'default');
 	}
 
-	// Check if field has custom override (either touched by user or already in config)
-	// Empty arrays are treated the same as undefined (not overridden)
+	// Helper to get field priority for display:
+	// absent/["default"] → global, [] → [] (disabled), [...] → use those
+	function getFieldPriority(fieldKey: string): string[] {
+		const fieldConfig = config?.metadata?.priority?.[fieldKey];
+		if (isDefaultSentinel(fieldConfig)) {
+			return getGlobalPriority();
+		}
+		return fieldConfig!;
+	}
+
+	// Returns true when a field has an explicit override ([] = disabled, or a custom list)
 	function isFieldOverridden(fieldKey: string): boolean {
 		const fieldConfig = config?.metadata?.priority?.[fieldKey];
-		const globalPriority = getGlobalPriority();
-
-		// Empty or undefined means "use global" (not overridden)
-		if (!fieldConfig || fieldConfig.length === 0) {
-			return false;
-		}
-
-		// Only consider it overridden if it's different from global
-		return JSON.stringify(fieldConfig) !== JSON.stringify(globalPriority);
+		return !isDefaultSentinel(fieldConfig);
 	}
 
 	// Count override count
@@ -148,49 +150,47 @@
 		onUpdate(JSON.parse(JSON.stringify(config)));
 	}
 
-	// Open field editor
+	// Open field editor — start with raw config if custom, else show global so user sees a list
 	function openFieldEditor(fieldKey: string) {
 		editingField = fieldKey;
-		editingPriority = [...getFieldPriority(fieldKey)];
+		const raw = config?.metadata?.priority?.[fieldKey];
+		if (isDefaultSentinel(raw)) {
+			editingPriority = [...getGlobalPriority()];
+		} else {
+			editingPriority = (raw ?? []).filter((s) => s !== 'default');
+		}
 	}
 
-	// Save field priority
+	// Save field priority — "default" sentinel signals "use global"
 	function saveFieldPriority() {
 		if (!editingField) return;
 
 		if (!config.metadata) config.metadata = {};
 		if (!config.metadata.priority) config.metadata.priority = {};
 
-		// Mark this field as touched
 		touchedFields.add(editingField);
 
 		const global = getGlobalPriority();
 		const isSameAsGlobal = JSON.stringify(editingPriority) === JSON.stringify(global);
 
 		if (isSameAsGlobal) {
-			// If it matches global, set to empty array (signals "use global")
-			config.metadata.priority[editingField] = [];
+			config.metadata.priority[editingField] = ['default'];
 		} else {
-			// Otherwise save the custom priority
 			config.metadata.priority[editingField] = editingPriority;
 		}
 
-		// Create a deep clone to trigger reactivity
 		onUpdate(JSON.parse(JSON.stringify(config)));
 		editingField = null;
 	}
 
-	// Reset field to global
+	// Reset field to global — uses "default" sentinel
 	function resetFieldToGlobal(fieldKey: string) {
-		if (!config.metadata?.priority) return;
+		if (!config.metadata) config.metadata = {};
+		if (!config.metadata.priority) config.metadata.priority = {};
 
-		// Mark as touched (user explicitly reset it)
 		touchedFields.add(fieldKey);
+		config.metadata.priority[fieldKey] = ['default'];
 
-		// Set to empty array (signals "use global")
-		config.metadata.priority[fieldKey] = [];
-
-		// Create a deep clone to trigger reactivity
 		onUpdate(JSON.parse(JSON.stringify(config)));
 	}
 
@@ -227,6 +227,11 @@
 		});
 		return groups;
 	});
+
+	// Enabled scrapers not yet in the editingPriority list (for the "add back" UI)
+	const availableScrapersToAdd = $derived(
+		getEnabledScrapers().filter((s) => !editingPriority.includes(s))
+	);
 </script>
 
 <div class="space-y-6">
@@ -360,29 +365,61 @@
 				</div>
 
 				<!-- Draggable List -->
-				<div class="max-h-[50vh] overflow-y-scroll pr-1">
-					<DraggableList
-						items={filterEnabledScrapers(editingPriority)}
-						onReorder={(newPriority) => { editingPriority = newPriority; }}
-					>
-						{#snippet children({ item })}
-							<span class="font-medium">
-								{formatScraperName(item)}
-							</span>
-						{/snippet}
-					</DraggableList>
+				<div class="max-h-[40vh] overflow-y-scroll pr-1">
+					{#if editingPriority.length === 0}
+						<div class="text-center py-6 text-muted-foreground border rounded-lg border-dashed">
+							<p class="text-sm font-medium">No scrapers — this field will be disabled</p>
+							<p class="text-xs mt-1">Add scrapers below or reset to default</p>
+						</div>
+					{:else}
+						<DraggableList
+							items={filterEnabledScrapers(editingPriority)}
+							onReorder={(newPriority) => { editingPriority = newPriority; }}
+							onRemove={(i) => { editingPriority = editingPriority.filter((_, j) => j !== i); }}
+						>
+							{#snippet children({ item })}
+								<span class="font-medium">
+									{formatScraperName(item)}
+								</span>
+							{/snippet}
+						</DraggableList>
+					{/if}
 				</div>
+
+				<!-- Available scrapers to add back -->
+				{#if availableScrapersToAdd.length > 0}
+					<div>
+						<p class="text-xs text-muted-foreground mb-2">Available scrapers (click to add):</p>
+						<div class="flex flex-wrap gap-2">
+							{#each availableScrapersToAdd as scraper}
+								<button
+									type="button"
+									onclick={() => { editingPriority = [...editingPriority, scraper]; }}
+									class="px-2 py-1 text-xs rounded-full border hover:bg-primary/10 hover:border-primary transition-colors"
+								>
+									{formatScraperName(scraper)}
+								</button>
+							{/each}
+						</div>
+					</div>
+				{/if}
 
 				<!-- Info -->
 				<div class="bg-accent/50 rounded-lg p-3 text-xs text-muted-foreground">
 					<p>
 						Scrapers are tried in order from top to bottom. The first scraper that returns data
-						for this field will be used.
+						for this field will be used. An empty list disables this field entirely.
 					</p>
 				</div>
 
 				<!-- Actions -->
-				<div class="flex items-center gap-3 justify-end">
+				<div class="flex items-center gap-3">
+					<Button variant="outline" onclick={() => { editingPriority = [...getGlobalPriority()]; }}>
+						{#snippet children()}
+							Reset to Default
+						{/snippet}
+					</Button>
+					<div class="flex-1"></div>
 					<Button variant="outline" onclick={() => (editingField = null)}>
 						{#snippet children()}
 							Cancel
