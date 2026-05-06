@@ -240,8 +240,11 @@
 							organizing={s.organizing}
 							destinationPath={s.destinationPath}
 							movieResultsLength={s.movieResults.length}
+							selectedCount={s.selectedCount}
 							onCancel={() => goto('/browse')}
 							onOrganizeAll={s.organizeAll}
+							onOrganizeSelected={s.organizeSelected}
+							onOrganizeCurrent={s.organizeCurrentMovie}
 						/>
 					{/if}
 				</div>

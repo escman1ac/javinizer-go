@@ -717,6 +717,22 @@ export function createReviewState(pageStore: Page) {
 		await organizeController.organizeAll(skipNfo, skipDownload);
 	}
 
+	function getSelectedFilePaths(): string[] {
+		return movieGroups
+			.filter(g => selectedMovieIds.has(g.movieId))
+			.flatMap(g => g.results.map(r => r.file_path));
+	}
+
+	async function organizeSelected() {
+		await organizeController.organizeSelected(getSelectedFilePaths(), skipNfo, skipDownload);
+	}
+
+	async function organizeCurrentMovie() {
+		const fp = currentResult?.file_path;
+		if (!fp) return;
+		await organizeController.organizeSelected([fp], skipNfo, skipDownload);
+	}
+
 	async function updateAll() {
 		const options: UpdateRequest = {};
 		if (forceOverwrite) options.force_overwrite = true;
@@ -957,6 +973,8 @@ export function createReviewState(pageStore: Page) {
 		openRescrapeModalForFailed,
 		executeRescrape,
 		organizeAll,
+		organizeSelected,
+		organizeCurrentMovie,
 		updateAll,
 		retryFailed,
 	};

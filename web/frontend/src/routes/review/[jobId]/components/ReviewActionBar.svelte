@@ -8,8 +8,11 @@
 		organizing: boolean;
 		destinationPath: string;
 		movieResultsLength: number;
+		selectedCount: number;
 		onCancel: () => void;
 		onOrganizeAll: () => void;
+		onOrganizeSelected: () => void;
+		onOrganizeCurrent: () => void;
 	}
 
 	let {
@@ -17,8 +20,11 @@
 		organizing,
 		destinationPath,
 		movieResultsLength,
+		selectedCount,
 		onCancel,
-		onOrganizeAll
+		onOrganizeAll,
+		onOrganizeSelected,
+		onOrganizeCurrent
 	}: Props = $props();
 </script>
 
@@ -31,6 +37,28 @@
 					Cancel
 				{/snippet}
 			</Button>
+			<Button variant="outline" onclick={onOrganizeCurrent} disabled={organizing || !destinationPath.trim()}>
+				{#snippet children()}
+					{#if organizing}
+						<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
+					{:else}
+						<Play class="h-4 w-4 mr-2" />
+					{/if}
+					Organize This Movie
+				{/snippet}
+			</Button>
+			{#if selectedCount > 0}
+				<Button variant="outline" onclick={onOrganizeSelected} disabled={organizing || !destinationPath.trim()}>
+					{#snippet children()}
+						{#if organizing}
+							<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
+						{:else}
+							<Play class="h-4 w-4 mr-2" />
+						{/if}
+						Organize Selected ({selectedCount})
+					{/snippet}
+				</Button>
+			{/if}
 			<Button onclick={onOrganizeAll} disabled={organizing || !destinationPath.trim()}>
 				{#snippet children()}
 					{#if organizing}

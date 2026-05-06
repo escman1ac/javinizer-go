@@ -197,12 +197,13 @@ type UpdateRequest struct {
 
 // OrganizeRequest represents an organize request
 type OrganizeRequest struct {
-	Destination   string `json:"destination" binding:"required" example:"/path/to/output"`
-	CopyOnly      bool   `json:"copy_only" example:"false"`
-	LinkMode      string `json:"link_mode,omitempty" binding:"omitempty,oneof=hard soft" example:"hard"`
-	OperationMode string `json:"operation_mode,omitempty" example:"organize"`
-	SkipNFO       bool   `json:"skip_nfo"`
-	SkipDownload  bool   `json:"skip_download"`
+	Destination   string   `json:"destination" binding:"required" example:"/path/to/output"`
+	CopyOnly      bool     `json:"copy_only" example:"false"`
+	LinkMode      string   `json:"link_mode,omitempty" binding:"omitempty,oneof=hard soft" example:"hard"`
+	OperationMode string   `json:"operation_mode,omitempty" example:"organize"`
+	SkipNFO       bool     `json:"skip_nfo"`
+	SkipDownload  bool     `json:"skip_download"`
+	FilePaths     []string `json:"file_paths,omitempty"` // Optional: limit organization to these source file paths
 }
 
 // OrganizePreviewRequest represents a preview request

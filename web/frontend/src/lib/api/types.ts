@@ -447,6 +447,7 @@ export interface OrganizeRequest {
 	operation_mode?: OperationMode;
 	skip_nfo?: boolean;
 	skip_download?: boolean;
+	file_paths?: string[];
 }
 
 export interface OrganizeResponse {

@@ -107,7 +107,7 @@ func organizeJob(deps *ServerDependencies) gin.HandlerFunc {
 			ctx, cancel := context.WithCancel(context.Background())
 			job.SetCancelFunc(cancel)
 			defer cancel()
-			processOrganizeJob(ctx, job, deps.JobQueue, req.Destination, req.CopyOnly, req.LinkMode, req.SkipNFO, req.SkipDownload, deps.DB, cfg, deps.GetRegistry(), deps.EventEmitter)
+			processOrganizeJob(ctx, job, deps.JobQueue, req.Destination, req.CopyOnly, req.LinkMode, req.SkipNFO, req.SkipDownload, deps.DB, cfg, deps.GetRegistry(), deps.EventEmitter, req.FilePaths)
 		}()
 
 		c.JSON(200, gin.H{"message": "Organization started"})

@@ -34,7 +34,7 @@ interface OrganizeControllerDeps {
 		getBatchJob: (jobId: string, includeData?: boolean) => Promise<BatchJobResponse>;
 		organizeBatchJob: (
 			jobId: string,
-			request: { destination: string; copy_only: boolean; link_mode?: 'hard' | 'soft'; operation_mode?: OperationMode; skip_nfo?: boolean; skip_download?: boolean }
+			request: { destination: string; copy_only: boolean; link_mode?: 'hard' | 'soft'; operation_mode?: OperationMode; skip_nfo?: boolean; skip_download?: boolean; file_paths?: string[] }
 		) => Promise<unknown>;
 		updateBatchJob: (jobId: string, request?: UpdateRequest) => Promise<unknown>;
 	};
@@ -192,13 +192,13 @@ export function createOrganizeController(deps: OrganizeControllerDeps) {
 		void pollOnce();
 	}
 
-	function prepareOrganizeRun() {
+	function prepareOrganizeRun(filePaths?: string[]) {
 		deps.clearWebSocketMessages();
 		deps.setOrganizeStatus('organizing');
 		deps.setOrganizing(true);
 		deps.setOrganizeProgress(0);
 		deps.getFileStatuses().clear();
-		deps.setExpectedOrganizeFilePaths(getOrganizeEligibleFilePaths(deps.getJob()));
+		deps.setExpectedOrganizeFilePaths(filePaths ?? getOrganizeEligibleFilePaths(deps.getJob()));
 		clearOrganizePollTimer();
 		clearOrganizeCompletionTimer();
 	}
@@ -233,6 +233,48 @@ export function createOrganizeController(deps: OrganizeControllerDeps) {
 				operation_mode: deps.getOperationMode() as OperationMode,
 				skip_nfo: skipNfo || false,
 				skip_download: skipDownload || false
+			});
+
+			startOrganizeCompletionPolling();
+		} catch (e) {
+			deps.setOrganizeStatus('failed');
+			deps.setOrganizing(false);
+			clearOrganizePollTimer();
+			const errorMessage = e instanceof Error ? e.message : 'Failed to start organize';
+			deps.toastError(errorMessage, 7000);
+		}
+	}
+
+	async function organizeSelected(filePaths: string[], skipNfo?: boolean, skipDownload?: boolean) {
+		if (filePaths.length === 0) {
+			deps.toastError('No files selected');
+			return;
+		}
+		const effectiveMode = deps.getOperationMode();
+		if (effectiveMode === 'organize' && !deps.getDestinationPath().trim()) {
+			deps.toastError('Please enter a destination path');
+			return;
+		}
+
+		lastSkipNfo = skipNfo ?? false;
+		lastSkipDownload = skipDownload ?? false;
+
+		const { copyOnly, linkMode } = getOrganizeRequestOptions(deps.getOrganizeOperation());
+		prepareOrganizeRun(filePaths);
+
+		try {
+			if (deps.getEditedMovies().size > 0) {
+				await deps.saveAllEdits();
+			}
+
+			await deps.api.organizeBatchJob(deps.getJobId(), {
+				destination: deps.getDestinationPath(),
+				copy_only: copyOnly,
+				link_mode: linkMode,
+				operation_mode: deps.getOperationMode() as OperationMode,
+				skip_nfo: skipNfo || false,
+				skip_download: skipDownload || false,
+				file_paths: filePaths
 			});
 
 			startOrganizeCompletionPolling();
@@ -324,6 +366,7 @@ export function createOrganizeController(deps: OrganizeControllerDeps) {
 
 	return {
 		organizeAll,
+		organizeSelected,
 		updateAll,
 		retryFailed,
 		handleWebSocketMessage,

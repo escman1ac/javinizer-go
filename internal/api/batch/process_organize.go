@@ -368,7 +368,7 @@ func finalizeOrganizeJob(job *worker.BatchJob, jobQueue *worker.JobQueue, organi
 	}
 }
 
-func processOrganizeJob(ctx context.Context, job *worker.BatchJob, jobQueue *worker.JobQueue, destination string, copyOnly bool, linkModeRaw string, skipNFO bool, skipDownload bool, db *database.DB, cfg *config.Config, registry *models.ScraperRegistry, emitter eventlog.EventEmitter) {
+func processOrganizeJob(ctx context.Context, job *worker.BatchJob, jobQueue *worker.JobQueue, destination string, copyOnly bool, linkModeRaw string, skipNFO bool, skipDownload bool, db *database.DB, cfg *config.Config, registry *models.ScraperRegistry, emitter eventlog.EventEmitter, filePaths []string) {
 	deps, err := initOrganizeDependencies(job, jobQueue, cfg, db, registry, emitter, linkModeRaw, skipDownload)
 	if err != nil {
 		return
@@ -387,10 +387,22 @@ func processOrganizeJob(ctx context.Context, job *worker.BatchJob, jobQueue *wor
 		}
 	}
 
+	// Build an allowlist from the optional file path filter.
+	var filePathFilter map[string]bool
+	if len(filePaths) > 0 {
+		filePathFilter = make(map[string]bool, len(filePaths))
+		for _, fp := range filePaths {
+			filePathFilter[fp] = true
+		}
+	}
+
 	status := job.GetStatus()
 	organized := 0
 	failed := 0
 	totalFiles := len(status.Results)
+	if filePathFilter != nil {
+		totalFiles = len(filePathFilter)
+	}
 
 	for filePath, fileResult := range status.Results {
 		select {
@@ -414,6 +426,9 @@ func processOrganizeJob(ctx context.Context, job *worker.BatchJob, jobQueue *wor
 		default:
 		}
 
+		if filePathFilter != nil && !filePathFilter[filePath] {
+			continue
+		}
 		if fileResult.Status != worker.JobStatusCompleted || fileResult.Data == nil {
 			continue
 		}
