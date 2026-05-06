@@ -1291,7 +1291,8 @@ func TestAggregatePartialData(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, movie)
 		require.Len(t, movie.Actresses, 1)
-		assert.Equal(t, 12345, movie.Actresses[0].DMMID)
+		// First-scraper-wins: r18dev has actress with DMMID=-123456 first; dmm not merged
+		assert.Equal(t, -123456, movie.Actresses[0].DMMID)
 	})
 
 	t.Run("gap filling from lower priority scraper", func(t *testing.T) {

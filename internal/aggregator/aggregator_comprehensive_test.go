@@ -444,12 +444,12 @@ func TestGetActressesByPriority(t *testing.T) {
 	actresses := agg.getActressesByPriority(results, []string{"r18dev", "dmm"})
 	require.Len(t, actresses, 1)
 
-	// Should merge data from both sources
+	// First-scraper-wins: r18dev is first priority and has data, so only r18dev fields are used
 	assert.Equal(t, "Yui", actresses[0].FirstName)
 	assert.Equal(t, "Hatano", actresses[0].LastName)
 	assert.Equal(t, "波多野結衣", actresses[0].JapaneseName)
-	assert.Equal(t, 12345, actresses[0].DMMID)
-	assert.Equal(t, "https://example.com/thumb.jpg", actresses[0].ThumbURL)
+	assert.Equal(t, 0, actresses[0].DMMID)        // dmm data not merged
+	assert.Equal(t, "", actresses[0].ThumbURL)    // dmm data not merged
 }
 
 // TestGetActressesByPriorityMultiple tests multiple actresses
@@ -1149,13 +1149,13 @@ func TestAggregateActressMergingByJapaneseName(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, movie)
 
-	// Should have merged into one actress
+	// First-scraper-wins: r18dev is first priority and has data — no cross-source merging
 	require.Len(t, movie.Actresses, 1)
 	assert.Equal(t, "波多野結衣", movie.Actresses[0].JapaneseName)
 	assert.Equal(t, "Yui", movie.Actresses[0].FirstName)
 	assert.Equal(t, "Hatano", movie.Actresses[0].LastName)
-	assert.Equal(t, 12345, movie.Actresses[0].DMMID)
-	assert.Equal(t, "https://example.com/thumb.jpg", movie.Actresses[0].ThumbURL)
+	assert.Equal(t, 0, movie.Actresses[0].DMMID)     // dmm data not merged
+	assert.Equal(t, "", movie.Actresses[0].ThumbURL) // dmm data not merged
 }
 
 func TestAggregateActressMergingJapaneseNameVsFirstName(t *testing.T) {
@@ -1608,17 +1608,15 @@ func TestActressDMMIDUpgradeScenario(t *testing.T) {
 
 	actresses := agg.getActressesByPriority(results, []string{"r18dev", "dmm"})
 
-	// Should have exactly 1 actress (merged by name, then upgraded with DMMID)
-	require.Len(t, actresses, 1, "Should merge actress and upgrade with DMMID")
+	// First-scraper-wins: r18dev has data first — used as-is, dmm not consulted
+	require.Len(t, actresses, 1, "Should return actress from first priority scraper")
 
-	// Should have DMMID from dmm
-	assert.Equal(t, 12345, actresses[0].DMMID, "Should upgrade actress with DMMID from dmm")
-
-	// Should keep data from r18dev (higher priority)
-	assert.Equal(t, "Yui", actresses[0].FirstName, "Should keep r18dev FirstName")
-	assert.Equal(t, "Hatano", actresses[0].LastName, "Should keep r18dev LastName")
-	assert.Equal(t, "波多野結衣", actresses[0].JapaneseName, "Should keep JapaneseName")
-	assert.Equal(t, "https://r18dev.example.com/thumb.jpg", actresses[0].ThumbURL, "Should keep r18dev ThumbURL")
+	// r18dev data is used; DMMID stays 0 (no upgrade from dmm with first-scraper-wins)
+	assert.Equal(t, 0, actresses[0].DMMID, "DMMID not upgraded — first-scraper-wins returns r18dev as-is")
+	assert.Equal(t, "Yui", actresses[0].FirstName)
+	assert.Equal(t, "Hatano", actresses[0].LastName)
+	assert.Equal(t, "波多野結衣", actresses[0].JapaneseName)
+	assert.Equal(t, "https://r18dev.example.com/thumb.jpg", actresses[0].ThumbURL)
 }
 
 // TestActressDMMIDPartialDataMerging tests that when multiple scrapers provide
@@ -1678,15 +1676,14 @@ func TestActressDMMIDPartialDataMerging(t *testing.T) {
 
 	actresses := agg.getActressesByPriority(results, []string{"r18dev", "dmm", "javlibrary"})
 
-	// Should have exactly 1 actress (deduplicated by DMMID)
-	require.Len(t, actresses, 1, "Should deduplicate actresses with same DMMID")
+	// First-scraper-wins: r18dev has data first — only r18dev fields used, no field-level gap-filling
+	require.Len(t, actresses, 1, "Should return actress from first priority scraper")
 
-	// Should merge data respecting priority order
 	assert.Equal(t, 12345, actresses[0].DMMID)
-	assert.Equal(t, "Yui", actresses[0].FirstName, "Should use r18dev FirstName (highest priority)")
-	assert.Equal(t, "Hatano", actresses[0].LastName, "Should use dmm LastName (r18dev had empty)")
-	assert.Equal(t, "波多野結衣", actresses[0].JapaneseName, "Should use r18dev JapaneseName (highest priority)")
-	assert.Equal(t, "https://dmm.example.com/thumb.jpg", actresses[0].ThumbURL, "Should use dmm ThumbURL (r18dev had empty)")
+	assert.Equal(t, "Yui", actresses[0].FirstName)
+	assert.Equal(t, "", actresses[0].LastName, "r18dev had empty LastName — not filled from dmm with first-scraper-wins")
+	assert.Equal(t, "波多野結衣", actresses[0].JapaneseName)
+	assert.Equal(t, "", actresses[0].ThumbURL, "r18dev had empty ThumbURL — not filled from dmm with first-scraper-wins")
 }
 
 // TestActressDMMIDZeroNotDeduplicated tests that actresses with DMMID=0 are NOT deduplicated

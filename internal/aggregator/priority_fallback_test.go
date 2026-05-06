@@ -53,11 +53,13 @@ func TestAggregateWithPerFieldOverrideExcludingSource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, movie)
 
-	assert.Equal(t, "200GANA-3215", movie.ID, "ID should fall back to mgstage when per-field sources have no data")
-	assert.Equal(t, "200GANA-3215", movie.ContentID)
-	assert.Equal(t, "マジ軟派、初撮。 2172", movie.Title)
-	assert.Equal(t, "ナンパTV", movie.Maker)
-	assert.Equal(t, 1, len(movie.Actresses), "Actresses should fall back to mgstage")
+	// Per-field override is exact — no global fallback. mgstage is excluded from id/title/etc,
+	// so those fields are empty when only mgstage has data.
+	assert.Equal(t, "", movie.ID, "Per-field exclusion of mgstage: no global fallback")
+	assert.Equal(t, "", movie.ContentID)
+	assert.Equal(t, "", movie.Title)
+	assert.Equal(t, "", movie.Maker)
+	assert.Equal(t, 0, len(movie.Actresses), "Per-field exclusion of mgstage leaves actresses empty")
 }
 
 func TestAggregatePerFieldPreference(t *testing.T) {

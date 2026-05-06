@@ -263,15 +263,12 @@ func resolveNameKey(japaneseName, firstName, lastName string) string {
 	return normalizeNameKey(lastName + " " + firstName)
 }
 
-// getActressesByPriority retrieves actresses based on priority and merges data from multiple sources
+// getActressesByPriority retrieves actresses from the highest-priority scraper that has any.
+// Uses first-scraper-wins, matching the behaviour of getGenresByPriority.
 func (a *Aggregator) getActressesByPriority(
 	results map[string]*models.ScraperResult,
 	priority []string,
 ) []models.Actress {
-	// Collect actresses from all sources, keyed by DMMID (most reliable identifier)
-	actressByDMMID := make(map[int]*models.Actress)
-	actressByName := make(map[string]*models.Actress)
-
 	unknownText := ""
 	skipUnknown := false
 	if a.config != nil {
@@ -281,119 +278,38 @@ func (a *Aggregator) getActressesByPriority(
 		}
 	}
 
-	hadAnyActressFromScrapers := false
-
 	for _, source := range priority {
 		result, exists := results[source]
 		if !exists || len(result.Actresses) == 0 {
 			continue
 		}
 
+		actresses := make([]models.Actress, 0, len(result.Actresses))
 		for _, info := range result.Actresses {
-			hadAnyActressFromScrapers = true
-
 			nameKey := resolveNameKey(info.JapaneseName, info.FirstName, info.LastName)
-
 			if skipUnknown && unknownText != "" && isUnknownActress(info, nameKey, unknownText) {
 				continue
 			}
-
-			var existing *models.Actress
-			var foundInDMMIDMap bool
-
-			if info.DMMID != 0 {
-				existing, foundInDMMIDMap = actressByDMMID[info.DMMID]
+			actress := &models.Actress{
+				DMMID:        info.DMMID,
+				FirstName:    info.FirstName,
+				LastName:     info.LastName,
+				JapaneseName: info.JapaneseName,
+				ThumbURL:     info.ThumbURL,
 			}
-
-			if existing == nil && nameKey != "" {
-				for _, actress := range actressByDMMID {
-					actressNameKey := resolveNameKey(actress.JapaneseName, actress.FirstName, actress.LastName)
-					if actressNameKey == nameKey {
-						existing = actress
-						foundInDMMIDMap = true
-						break
-					}
-				}
-
-				if existing == nil {
-					existing = actressByName[nameKey]
-				}
-			}
-
-			// If actress exists, merge fields
-			if existing != nil {
-				if existing.DMMID <= 0 && info.DMMID != 0 {
-					oldDMMID := existing.DMMID
-					existing.DMMID = info.DMMID
-					// Move from placeholder/non-DMMID entries to real DMMID key.
-					if foundInDMMIDMap && oldDMMID != info.DMMID {
-						delete(actressByDMMID, oldDMMID)
-					}
-					if !foundInDMMIDMap && nameKey != "" {
-						delete(actressByName, nameKey)
-					}
-					actressByDMMID[info.DMMID] = existing
-				}
-				if existing.FirstName == "" && info.FirstName != "" {
-					existing.FirstName = info.FirstName
-				}
-				if existing.LastName == "" && info.LastName != "" {
-					existing.LastName = info.LastName
-				}
-				if existing.JapaneseName == "" && info.JapaneseName != "" {
-					existing.JapaneseName = info.JapaneseName
-				}
-				if existing.ThumbURL == "" && info.ThumbURL != "" {
-					existing.ThumbURL = info.ThumbURL
-				}
-			} else {
-				// New actress - add to appropriate map
-				actress := &models.Actress{
-					DMMID:        info.DMMID,
-					FirstName:    info.FirstName,
-					LastName:     info.LastName,
-					JapaneseName: info.JapaneseName,
-					ThumbURL:     info.ThumbURL,
-				}
-
-				if info.DMMID != 0 {
-					actressByDMMID[info.DMMID] = actress
-				} else if nameKey != "" {
-					actressByName[nameKey] = actress
-				}
-				// Skip actresses with no DMMID and no name
-			}
-		}
-	}
-
-	// Merge both maps and convert to slice
-	totalActresses := len(actressByDMMID) + len(actressByName)
-	if totalActresses > 0 {
-		actresses := make([]models.Actress, 0, totalActresses)
-
-		// Add actresses with DMMID first (primary source)
-		for _, actress := range actressByDMMID {
-			// Apply alias conversion if enabled
 			if a.config.Metadata.ActressDatabase.Enabled && a.config.Metadata.ActressDatabase.ConvertAlias {
 				a.applyActressAlias(actress)
 			}
 			actresses = append(actresses, *actress)
 		}
 
-		// Add actresses without DMMID (fallback)
-		for _, actress := range actressByName {
-			// Apply alias conversion if enabled
-			if a.config.Metadata.ActressDatabase.Enabled && a.config.Metadata.ActressDatabase.ConvertAlias {
-				a.applyActressAlias(actress)
-			}
-			actresses = append(actresses, *actress)
+		if len(actresses) > 0 {
+			return actresses
 		}
-
-		return actresses
 	}
 
-	// If no actresses found and unknown actress text is set, add unknown
-	if !hadAnyActressFromScrapers && a.config.Metadata.NFO.IsUnknownActressFallback() && a.config.Metadata.NFO.UnknownActressText != "" {
+	// No actresses found from any scraper — fall back to unknown placeholder if configured
+	if a.config.Metadata.NFO.IsUnknownActressFallback() && a.config.Metadata.NFO.UnknownActressText != "" {
 		return []models.Actress{
 			{
 				FirstName:    a.config.Metadata.NFO.UnknownActressText,
