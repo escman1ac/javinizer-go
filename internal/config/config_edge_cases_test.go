@@ -675,11 +675,11 @@ func TestGetFieldPriority(t *testing.T) {
 	// Field with override uses the override
 	assert.Equal(t, []string{"dmm", "r18dev"}, p.GetFieldPriority("title"))
 
-	// Field with empty override falls back to global
-	assert.Equal(t, []string{"r18dev", "dmm"}, p.GetFieldPriority("actress"))
+	// Field with empty override means "disabled" — returns empty slice, not global
+	assert.Equal(t, []string{}, p.GetFieldPriority("actress"))
 
-	// Field without override falls back to global
-	assert.Equal(t, []string{"r18dev", "dmm"}, p.GetFieldPriority("genre"))
+	// Field without override returns nil — caller should use global priority
+	assert.Nil(t, p.GetFieldPriority("genre"))
 
 	// Nil PriorityConfig
 	var nilP *PriorityConfig

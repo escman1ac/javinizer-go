@@ -89,9 +89,14 @@ func (a *Aggregator) resolvePriorities() {
 		fieldPriority := copySlice(globalPriority)
 
 		if a.config != nil {
-			if fp := a.config.Metadata.Priority.GetFieldPriority(toSnakeCase(field)); len(fp) > 0 {
-				fieldPriority = mergePriorityLists(fp, globalPriority)
+			fp := a.config.Metadata.Priority.GetFieldPriority(toSnakeCase(field))
+			if fp != nil {
+				// Explicit per-field override:
+				//   []   → field is disabled (no scrapers)
+				//   [...] → use only these scrapers, no global fallback
+				fieldPriority = copySlice(fp)
 			}
+			// fp == nil means "use global priority" (key absent or ["default"])
 		}
 
 		a.resolvedPriorities[field] = fieldPriority
@@ -124,9 +129,9 @@ func mergePriorityLists(perFieldOverride, globalFallback []string) []string {
 	return merged
 }
 
-// getFieldPriorityFromConfig returns the scraper priority list.
-// Checks per-field override first, then global metadata priority, then scrapers priority.
-func getFieldPriorityFromConfig(cfg *config.Config, fieldKey string) []string {
+// getFieldPriorityFromConfig returns the global scraper priority list.
+// Checks global metadata priority, then scrapers priority, then scraperutil defaults.
+func getFieldPriorityFromConfig(cfg *config.Config, _ string) []string {
 	if cfg == nil {
 		if priorities := scraperutil.GetPriorities(); len(priorities) > 0 {
 			return priorities
@@ -134,8 +139,9 @@ func getFieldPriorityFromConfig(cfg *config.Config, fieldKey string) []string {
 		return nil
 	}
 
-	if fp := cfg.Metadata.Priority.GetFieldPriority(fieldKey); len(fp) > 0 {
-		return fp
+	// Prefer the explicit metadata priority list over the scrapers priority.
+	if len(cfg.Metadata.Priority.Priority) > 0 {
+		return cfg.Metadata.Priority.Priority
 	}
 
 	if len(cfg.Scrapers.Priority) > 0 {

@@ -116,24 +116,36 @@ type PriorityConfig struct {
 	Priority []string `yaml:"priority" json:"priority"`
 	// Fields holds per-metadata-field scraper priority overrides.
 	// Keys are snake_case field names matching the API (e.g. "title", "actress", "cover_url").
-	// An empty or nil slice for a field means "use global priority".
+	//
+	// Semantics:
+	//   key absent           → use global priority (nil return from GetFieldPriority)
+	//   ["default"]          → use global priority (explicit; nil return)
+	//   []          (empty)  → field is disabled; no scrapers used (empty-slice return)
+	//   ["a", "b", ...]      → use only these scrapers for this field (no global fallback)
 	Fields map[string][]string `yaml:"-" json:"-"`
 }
 
-// GetFieldPriority returns the priority list for a specific metadata field.
-// If the field has no override (or the override is empty), it falls back to
-// the global Priority list. Returns nil if neither is set.
+// GetFieldPriority returns the scraper list for a specific metadata field.
+//
+// Return values:
+//   - nil  — key is absent or set to ["default"]; caller should use global priority.
+//   - []   — key is explicitly set to an empty list; field is disabled (no scrapers).
+//   - [...] — use exactly these scrapers for this field (no global fallback).
 func (p *PriorityConfig) GetFieldPriority(fieldKey string) []string {
 	if p == nil {
 		return nil
 	}
-	if override, ok := p.Fields[fieldKey]; ok && len(override) > 0 {
-		return override
+	override, ok := p.Fields[fieldKey]
+	if !ok {
+		// Key not present — caller uses global priority.
+		return nil
 	}
-	if len(p.Priority) > 0 {
-		return p.Priority
+	// ["default"] is an explicit signal meaning "use global priority".
+	if len(override) == 1 && override[0] == "default" {
+		return nil
 	}
-	return nil
+	// Return as-is: may be empty (disabled) or a custom list.
+	return override
 }
 
 // MarshalJSON serializes PriorityConfig as a flat JSON object.
