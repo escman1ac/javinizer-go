@@ -152,6 +152,7 @@
 								}
 							}}
 							completenessConfig={s.completenessConfig}
+							effectiveMovie={s.editedMovies.get(group.primaryResult.file_path)}
 						/>
 					{/each}
 				</div>

@@ -23,6 +23,7 @@
 		previewImageURL: (url: string | undefined) => string;
 		onclick: (e: MouseEvent) => void;
 		completenessConfig?: CompletenessConfig;
+		effectiveMovie?: Movie;
 	}
 
 	let {
@@ -36,10 +37,11 @@
 		displayImageType = 'poster',
 		previewImageURL,
 		onclick,
-		completenessConfig
+		completenessConfig,
+		effectiveMovie
 	}: Props = $props();
 
-	const movie = $derived(movieGroup.primaryResult.data as Movie | undefined);
+	const movie = $derived(effectiveMovie ?? (movieGroup.primaryResult.data as Movie | undefined));
 	const imageSrc = $derived(
 		displayImageType === 'cover'
 			? (displayCoverUrl ? previewImageURL(displayCoverUrl) : undefined)
