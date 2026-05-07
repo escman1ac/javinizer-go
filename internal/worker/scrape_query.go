@@ -220,12 +220,19 @@ func processSingleScraper(
 		}
 	}
 
-	scraperQuery := resolvedID
+	// Only give scrapers that pre-resolve their own content IDs (i.e. DMM) the DMM content ID.
+	// All other scrapers use the formatted movieID to prevent the DMM content ID ("start257")
+	// from contaminating scrapers like JavLibrary that expect a formatted ID ("START-257").
+	_, usesContentID := scraper.(models.ContentIDResolver)
+	scraperQuery := movieID
+	if usesContentID && resolvedID != "" {
+		scraperQuery = resolvedID
+	}
 	if mappedQuery, ok := resolveScraperQueryForInputs(scraper, rawFilenameQuery, movieID, resolvedID); ok {
 		scraperQuery = mappedQuery
 	}
 	if scraperQuery != movieID {
-		logging.Debugf("[Batch %s] File %d: Scraper %s using resolvedID %q instead of movieID %q",
+		logging.Debugf("[Batch %s] File %d: Scraper %s using query %q instead of movieID %q",
 			job.ID, fileIndex, scraper.Name(), scraperQuery, movieID)
 	}
 
