@@ -549,39 +549,8 @@ func (s *Scraper) extractActresses(html string) []models.ActressInfo {
 	return actresses
 }
 
-// extractDescription extracts the movie description from the page.
-// JavLibrary typically doesn't include movie descriptions on detail pages.
-// We check the meta description tag first, then fall back to any review text.
-func (s *Scraper) extractDescription(html string) string {
-	// First check meta description tag
-	re := regexp.MustCompile(`(?i)<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']`)
-	matches := re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		return strings.TrimSpace(matches[1])
-	}
-	// Fallback 1: look for text in video_review div
-	re = regexp.MustCompile(`id="video_review"[^>]*>[\s\S]*?class="text"[^>]*>([\s\S]*?)</td>`)
-	matches = re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		desc := strings.TrimSpace(matches[1])
-		// Filter out if it's just rating stars without actual review text
-		if len(desc) >= 20 && !strings.Contains(desc, "star-rating-control") {
-			return desc
-		}
-	}
-	// Fallback 2: look for any text content that looks like a description
-	// (more than 50 chars and not just a rating)
-	re = regexp.MustCompile(`id="video_review"[^>]*>([\s\S]*?)</div>`)
-	matches = re.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		// Extract just the text content, stripping HTML tags
-		text := strings.TrimSpace(matches[1])
-		text = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(text, " ")
-		text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
-		if len(text) > 50 && !strings.Contains(text, "star-rating-control") {
-			return text
-		}
-	}
+// extractDescription always returns "" — JavLibrary does not include movie descriptions.
+func (s *Scraper) extractDescription(_ string) string {
 	return ""
 }
 

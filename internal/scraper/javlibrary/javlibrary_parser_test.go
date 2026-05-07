@@ -289,23 +289,15 @@ func TestExtractDescription(t *testing.T) {
 	}
 	s := New(settings, &config.ProxyConfig{}, config.FlareSolverrConfig{})
 
-	// Test meta description tag (primary method)
-	html := `<html><head><meta name="description" content="This is a great movie with excellent quality!"></head><body><div id="video_review"><div class="text">This is a great movie with excellent quality!</div></div></body></html>`
-	if got := s.extractDescription(html); got != "This is a great movie with excellent quality!" {
-		t.Fatalf("extractDescription = %q, want 'This is a great movie...'", got)
-	}
-
-	// Test fallback to video_review div text (when no meta tag)
-	// JavLibrary uses table structure in video_review
-	html = `<html><head></head><body><div id="video_review"><table><tr><td class="text">Sample review text here</td></tr></table></div></body></html>`
-	if got := s.extractDescription(html); got != "Sample review text here" {
-		t.Fatalf("extractDescription fallback = %q", got)
-	}
-
-	// Empty test - no meta description, no review text
-	html = `<html><head></head><body><div>no review</div></body></html>`
-	if got := s.extractDescription(html); got != "" {
-		t.Fatalf("extractDescription empty = %q, want empty", got)
+	// JavLibrary does not provide descriptions — always returns "".
+	for _, html := range []string{
+		`<html><head><meta name="description" content="This is a great movie with excellent quality!"></head><body></body></html>`,
+		`<html><head></head><body><div id="video_review"><table><tr><td class="text">Sample review text here</td></tr></table></div></body></html>`,
+		`<html><head></head><body><div>no review</div></body></html>`,
+	} {
+		if got := s.extractDescription(html); got != "" {
+			t.Fatalf("extractDescription = %q, want empty (JavLibrary has no descriptions)", got)
+		}
 	}
 }
 
@@ -469,16 +461,14 @@ func TestExtractTrailerURL(t *testing.T) {
 	}
 	s := New(settings, &config.ProxyConfig{}, config.FlareSolverrConfig{})
 
-	// Test mp4 URL
-	html := `<a href="https://example.com/sample_movie.mp4">sample</a>`
-	if got := s.extractTrailerURL(html); got != "https://example.com/sample_movie.mp4" {
-		t.Fatalf("extractTrailerURL = %q", got)
-	}
-
-	// Empty test
-	html = `<div>no trailer</div>`
-	if got := s.extractTrailerURL(html); got != "" {
-		t.Fatalf("extractTrailerURL empty = %q, want empty", got)
+	// JavLibrary no longer hosts trailers — always returns "".
+	for _, html := range []string{
+		`<a href="https://example.com/sample_movie.mp4">sample</a>`,
+		`<div>no trailer</div>`,
+	} {
+		if got := s.extractTrailerURL(html); got != "" {
+			t.Fatalf("extractTrailerURL = %q, want empty (JavLibrary has no trailers)", got)
+		}
 	}
 }
 
@@ -514,8 +504,8 @@ func TestParseDetailPage_FullData(t *testing.T) {
 	}
 
 	// Verify new fields
-	if result.Description != "This is a great movie review!" {
-		t.Fatalf("Description = %q, want 'This is a great movie review!'", result.Description)
+	if result.Description != "" {
+		t.Fatalf("Description = %q, want empty (JavLibrary has no descriptions)", result.Description)
 	}
 	if result.Series != "Series Test" {
 		t.Fatalf("Series = %q", result.Series)
@@ -526,7 +516,7 @@ func TestParseDetailPage_FullData(t *testing.T) {
 	if len(result.ScreenshotURL) != 2 {
 		t.Fatalf("ScreenshotURL count = %d, want 2", len(result.ScreenshotURL))
 	}
-	if result.TrailerURL != "https://example.com/trailer.mp4" {
-		t.Fatalf("TrailerURL = %q", result.TrailerURL)
+	if result.TrailerURL != "" {
+		t.Fatalf("TrailerURL = %q, want empty (JavLibrary has no trailers)", result.TrailerURL)
 	}
 }
