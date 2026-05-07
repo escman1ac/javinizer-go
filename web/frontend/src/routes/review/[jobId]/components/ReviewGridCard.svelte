@@ -140,8 +140,14 @@
 		<p class="font-semibold text-sm truncate">
 			{movie?.display_title || movieGroup.movieId}
 		</p>
-		{#if movie?.maker}
-			<p class="text-muted-foreground text-xs truncate">{movie.maker}</p>
+		{#if movie}
+			<p class="text-muted-foreground text-xs truncate">
+				{movie.actresses?.length
+					? movie.actresses.map(a =>
+						[a.first_name, a.last_name].filter(Boolean).join(' ') || a.japanese_name || ''
+					  ).filter(Boolean).join(', ')
+					: 'Unknown'}
+			</p>
 		{/if}
 	</div>
 </div>
