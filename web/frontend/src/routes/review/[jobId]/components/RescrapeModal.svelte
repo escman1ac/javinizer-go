@@ -57,21 +57,31 @@
 		}
 	});
 
-	async function handleSearchCandidates() {
+	// handleManualSearch is called by the main action button in manual mode.
+	// Direct URLs bypass candidate search and rescrape immediately.
+	// ID queries fetch candidates first so the user can pick the right match.
+	async function handleManualSearch() {
 		const query = manualSearchInput.trim();
 		if (!query) return;
+
+		// Direct URL → skip candidate search, rescrape immediately
+		const isURL = query.startsWith('http://') || query.startsWith('https://');
+		if (isURL) {
+			onExecute({ manualSearchMode: true, manualSearchInput: query });
+			return;
+		}
+
 		searchingCandidates = true;
 		candidateError = '';
 		candidates = [];
 		selectedCandidate = null;
 		try {
 			const results = await onSearchCandidates(query, selectedScrapers);
-			if (results.length === 1) {
-				// Single result — skip the picker and go straight to rescrape
-				manualSearchInput = results[0].detail_url;
-				onExecute({ manualSearchMode: true, manualSearchInput: results[0].detail_url });
-			} else if (results.length === 0) {
-				candidateError = 'No results found.';
+			if (results.length === 0) {
+				candidateError = 'No results found. You can still rescrape using the ID directly.';
+			} else if (results.length === 1) {
+				// Single result — skip the picker and rescrape immediately
+				pickAndRescrape(results[0]);
 			} else {
 				candidates = results;
 			}
@@ -82,10 +92,11 @@
 		}
 	}
 
-	function pickCandidate(c: SearchCandidate) {
+	function pickAndRescrape(c: SearchCandidate) {
 		selectedCandidate = c;
 		manualSearchInput = c.detail_url;
 		candidates = [];
+		onExecute({ manualSearchMode: true, manualSearchInput: c.detail_url });
 	}
 
 	function clearCandidateSelection() {
@@ -174,7 +185,7 @@
 									<div class="grid grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
 										{#each candidates as candidate (candidate.detail_url)}
 											<button
-												onclick={() => pickCandidate(candidate)}
+												onclick={() => pickAndRescrape(candidate)}
 												class="flex flex-col items-center gap-1 p-2 rounded-lg border hover:border-primary hover:bg-primary/5 transition-all text-left"
 											>
 												{#if candidate.cover_url}
@@ -202,34 +213,19 @@
 									<label for="manual-search-input" class="text-sm font-medium mb-2 block">
 										DVD ID, Content ID, or Direct URL
 									</label>
-									<div class="flex gap-2">
-										<input
-											id="manual-search-input"
-											type="text"
-											bind:value={manualSearchInput}
-											placeholder="e.g., IPX-123 or https://www.dmm.co.jp/..."
-											class="flex-1 px-3 py-2 border rounded-md bg-background focus:ring-2 focus:ring-primary focus:border-primary transition-all font-mono text-sm"
-											onkeydown={(e) => { if (e.key === 'Enter') handleSearchCandidates(); }}
-										/>
-										<Button
-											variant="outline"
-											onclick={handleSearchCandidates}
-											disabled={searchingCandidates || !manualSearchInput.trim()}
-										>
-											{#snippet children()}
-												{#if searchingCandidates}
-													<LoaderCircle class="h-4 w-4 animate-spin" />
-												{:else}
-													<Search class="h-4 w-4" />
-												{/if}
-											{/snippet}
-										</Button>
-									</div>
+									<input
+										id="manual-search-input"
+										type="text"
+										bind:value={manualSearchInput}
+										placeholder="e.g., IPX-123 or https://www.dmm.co.jp/..."
+										class="w-full px-3 py-2 border rounded-md bg-background focus:ring-2 focus:ring-primary focus:border-primary transition-all font-mono text-sm"
+										onkeydown={(e) => { if (e.key === 'Enter') handleManualSearch(); }}
+									/>
 									{#if candidateError}
 										<p class="text-xs text-destructive mt-2">{candidateError}</p>
 									{:else}
 										<p class="text-xs text-muted-foreground mt-2">
-											Click the search icon to see all matching results and pick the correct one, or press Enter / Rescrape to use the input directly.
+											Enter a DVD ID to search for matching results, or paste a direct URL to skip search.
 										</p>
 									{/if}
 								</div>
@@ -372,16 +368,21 @@
 						</Button>
 					{:else}
 						<Button
-							onclick={() => onExecute({ manualSearchMode, manualSearchInput })}
-							disabled={rescraping || (manualSearchMode && !manualSearchInput.trim())}
+							onclick={manualSearchMode && !bulkMovieCount
+								? handleManualSearch
+								: () => onExecute({ manualSearchMode, manualSearchInput })}
+							disabled={rescraping || searchingCandidates || (manualSearchMode && !manualSearchInput.trim())}
 						>
 							{#snippet children()}
-								{#if rescraping}
+								{#if rescraping || searchingCandidates}
 									<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
-									{bulkMovieCount ? `Rescraping ${bulkMovieCount} movies...` : (manualSearchMode ? 'Scraping...' : 'Rescraping...')}
+									{searchingCandidates ? 'Searching...' : (bulkMovieCount ? `Rescraping ${bulkMovieCount} movies...` : 'Scraping...')}
+								{:else if manualSearchMode && !bulkMovieCount}
+									<Search class="h-4 w-4 mr-2" />
+									Search
 								{:else}
 									<RotateCcw class="h-4 w-4 mr-2" />
-									{bulkMovieCount ? `Rescrape ${bulkMovieCount} movies` : (manualSearchMode ? 'Rescrape' : 'Rescrape')}
+									{bulkMovieCount ? `Rescrape ${bulkMovieCount} movies` : 'Rescrape'}
 								{/if}
 							{/snippet}
 						</Button>
