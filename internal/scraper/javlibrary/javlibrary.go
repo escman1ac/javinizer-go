@@ -299,18 +299,8 @@ func (s *Scraper) fetchPageCtx(ctx context.Context, url string) (string, error) 
 	// The flaresolverr client is only non-nil when it was successfully initialized,
 	// which happens when useFlareSolverr=true (based on scraper/global FlareSolverr config).
 	if s.flaresolverr != nil {
-		// If resty followed a redirect, pass the final URL to FlareSolverr so it only
-		// needs to solve one Cloudflare challenge (at the destination) instead of two
-		// (at the original URL and again at the redirected URL).
-		flareSolverrURL := url
-		if resp != nil && resp.RawResponse != nil && resp.RawResponse.Request != nil {
-			if finalURL := resp.RawResponse.Request.URL.String(); finalURL != url {
-				logging.Debugf("JavLibrary: Direct request redirected %s → %s; using redirected URL for FlareSolverr", url, finalURL)
-				flareSolverrURL = finalURL
-			}
-		}
-		logging.Infof("JavLibrary: Using FlareSolverr for %s", flareSolverrURL)
-		html, cookies, fsErr := s.flaresolverr.ResolveURL(ctx, flareSolverrURL)
+		logging.Infof("JavLibrary: Using FlareSolverr for %s", url)
+		html, cookies, fsErr := s.flaresolverr.ResolveURL(ctx, url)
 		if fsErr == nil {
 			if models.IsCloudflareChallengePage(html) {
 				return "", models.NewScraperChallengeError(
