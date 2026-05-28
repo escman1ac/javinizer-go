@@ -207,6 +207,12 @@ func (s *Scraper) ScrapeURL(ctx context.Context, rawURL string) (*models.Scraper
 	}
 
 	if strings.Contains(html, `id="video_info"`) {
+		// When id was extracted from a ?v=<code> URL, it is the JavLibrary
+		// internal vid code (e.g. "javliob7y4"), not the movie ID (e.g.
+		// "HNDS-019"). Prefer the real movie ID from the page title.
+		if realID := extractMovieIDFromDetailHTML(html); realID != "" {
+			id = realID
+		}
 		return s.parseDetailPage(html, id, detailURL, resultLanguage)
 	}
 
@@ -397,6 +403,33 @@ func (s *Scraper) parseDetailPage(html string, id string, sourceURL string, lang
 	}
 
 	return result, nil
+}
+
+// extractMovieIDFromDetailHTML extracts the display movie ID (e.g. "HNDS-019")
+// from the page title of a JavLibrary detail page. The title format is always
+// "<ID> <Title> - JAVLibrary"; the first token before the space is the movie ID.
+// Returns "" if the pattern is not found or the first token looks like a vid code.
+func extractMovieIDFromDetailHTML(html string) string {
+	re := regexp.MustCompile(`<title>([^<]+)</title>`)
+	m := re.FindStringSubmatch(html)
+	if len(m) < 2 {
+		return ""
+	}
+	title := strings.TrimSpace(m[1])
+	if idx := strings.LastIndex(title, " - JAVLibrary"); idx > 0 {
+		title = title[:idx]
+	}
+	parts := strings.Fields(title)
+	if len(parts) == 0 {
+		return ""
+	}
+	candidate := strings.ToUpper(parts[0])
+	// A valid movie ID contains a hyphen (e.g. "HNDS-019"); JavLibrary internal
+	// vid codes like "javliob7y4" do not.
+	if strings.Contains(candidate, "-") {
+		return candidate
+	}
+	return ""
 }
 
 // extractTitle extracts the movie title from HTML
