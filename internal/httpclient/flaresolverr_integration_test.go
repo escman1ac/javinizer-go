@@ -1,6 +1,7 @@
 package httpclient_test
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func TestFlareSolverr_RealConnection(t *testing.T) {
 	t.Run("ResolveSimpleURL", func(t *testing.T) {
 		targetURL := "https://httpbin.org/get"
 
-		html, cookies, err := fs.ResolveURL(targetURL)
+		html, cookies, err := fs.ResolveURL(context.Background(), targetURL)
 
 		t.Logf("Target URL: %s", targetURL)
 		t.Logf("Error: %v", err)
@@ -69,7 +70,7 @@ func TestFlareSolverr_RealConnection(t *testing.T) {
 
 	// Test 2: Create a session
 	t.Run("CreateSession", func(t *testing.T) {
-		sessionID, err := fs.CreateSession()
+		sessionID, err := fs.CreateSession(context.Background())
 
 		t.Logf("Session ID: %s", sessionID)
 		t.Logf("Error: %v", err)
@@ -82,22 +83,22 @@ func TestFlareSolverr_RealConnection(t *testing.T) {
 			t.Logf("Successfully created session: %s", sessionID)
 
 			// Clean up the session
-			err = fs.DestroySession(sessionID)
+			err = fs.DestroySession(context.Background(), sessionID)
 			t.Logf("Destroy session error: %v", err)
 		}
 	})
 
 	// Test 3: Resolve with session
 	t.Run("ResolveWithSession", func(t *testing.T) {
-		sessionID, err := fs.CreateSession()
+		sessionID, err := fs.CreateSession(context.Background())
 		if err != nil {
 			t.Skip("cannot test session-based resolution without session creation")
 			return
 		}
-		defer func() { _ = fs.DestroySession(sessionID) }()
+		defer func() { _ = fs.DestroySession(context.Background(), sessionID) }()
 
 		targetURL := "https://httpbin.org/get"
-		html, cookies, err := fs.ResolveURLWithSession(targetURL, sessionID)
+		html, cookies, err := fs.ResolveURLWithSession(context.Background(), targetURL, sessionID)
 
 		t.Logf("Target URL: %s", targetURL)
 		t.Logf("Session ID: %s", sessionID)
@@ -141,7 +142,7 @@ func TestFlareSolverr_JavLibraryConnection(t *testing.T) {
 
 	t.Log("Target URL:", targetURL)
 
-	html, cookies, err := fs.ResolveURL(targetURL)
+	html, cookies, err := fs.ResolveURL(context.Background(), targetURL)
 
 	t.Logf("Error: %v", err)
 	t.Logf("HTML length: %d", len(html))

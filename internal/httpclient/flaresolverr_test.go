@@ -1,6 +1,7 @@
 package httpclient_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -68,9 +69,9 @@ func TestResolveURL_ReusesPersistentSessionAndTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, fs)
 
-	_, _, err = fs.ResolveURL("https://example.com/page1")
+	_, _, err = fs.ResolveURL(context.Background(), "https://example.com/page1")
 	require.NoError(t, err)
-	_, _, err = fs.ResolveURL("https://example.com/page2")
+	_, _, err = fs.ResolveURL(context.Background(), "https://example.com/page2")
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -231,7 +232,7 @@ func TestNewRestyClientWithFlareSolverr_RequestLevelProxy(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, fs)
 
-	_, _, err = fs.ResolveURL("https://example.com")
+	_, _, err = fs.ResolveURL(context.Background(), "https://example.com")
 	require.NoError(t, err)
 
 	require.NotNil(t, captured)
@@ -516,12 +517,12 @@ func TestFlareSolverr_DestroySession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a session first
-	sessionID, err := fs.CreateSession()
+	sessionID, err := fs.CreateSession(context.Background())
 	require.NoError(t, err)
 	require.NotEmpty(t, sessionID)
 
 	// Destroy the session
-	err = fs.DestroySession(sessionID)
+	err = fs.DestroySession(context.Background(), sessionID)
 	assert.NoError(t, err)
 	assert.Equal(t, "sessions.destroy", capturedCmd)
 }
@@ -576,7 +577,7 @@ func TestFlareSolverr_SessionResetOnFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// First call will fail and trigger session reset
-	_, _, err = fs.ResolveURL("https://example.com/page1")
+	_, _, err = fs.ResolveURL(context.Background(), "https://example.com/page1")
 	// Error expected since we return error responses
 	assert.Error(t, err)
 
@@ -622,11 +623,11 @@ func TestFlareSolverr_SessionCacheAfterDestroy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create session
-	sessionID, err := fs.CreateSession()
+	sessionID, err := fs.CreateSession(context.Background())
 	require.NoError(t, err)
 
 	// Destroy session
-	err = fs.DestroySession(sessionID)
+	err = fs.DestroySession(context.Background(), sessionID)
 	assert.NoError(t, err)
 
 	// Session should be removed from cache
@@ -681,7 +682,7 @@ func TestResolveURL_CachesCookiesInSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// First request: should return cookies from response
-	_, cookies1, err := fs.ResolveURL("https://example.com/page1")
+	_, cookies1, err := fs.ResolveURL(context.Background(), "https://example.com/page1")
 	require.NoError(t, err)
 	require.Len(t, cookies1, 2, "first request should return cookies from response")
 	assert.Equal(t, "cf_clearance", cookies1[0].Name)
@@ -690,7 +691,7 @@ func TestResolveURL_CachesCookiesInSession(t *testing.T) {
 	assert.Equal(t, "abc", cookies1[1].Value)
 
 	// Second request: should return cached cookies even though server returned empty
-	_, cookies2, err := fs.ResolveURL("https://example.com/page2")
+	_, cookies2, err := fs.ResolveURL(context.Background(), "https://example.com/page2")
 	require.NoError(t, err)
 	require.Len(t, cookies2, 2, "second request should return cached cookies when server returns empty")
 	assert.Equal(t, "cf_clearance", cookies2[0].Name)

@@ -429,9 +429,13 @@ func (s *Scraper) fetchPageCtx(ctx context.Context, targetURL string) (string, e
 		logging.Debugf("JavDB: Direct request returned status %d for %s", resp.StatusCode(), targetURL)
 	}
 
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+
 	if s.settings.UseFlareSolverr && s.flaresolverr != nil {
 		logging.Debugf("JavDB: Resolving via FlareSolverr: %s", targetURL)
-		html, cookies, fsErr := s.flaresolverr.ResolveURL(targetURL)
+		html, cookies, fsErr := s.flaresolverr.ResolveURL(ctx, targetURL)
 		if fsErr == nil {
 			s.cookieMu.Lock()
 			for _, c := range cookies {

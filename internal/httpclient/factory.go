@@ -231,18 +231,18 @@ func NewFlareSolverr(cfg *config.FlareSolverrConfig) (*FlareSolverr, error) {
 
 // ResolveURL resolves a URL through FlareSolverr, returning HTML content and cookies.
 // The mutex is held for the entire operation to ensure session reuse is safe from
-// concurrent reset calls.
-func (fs *FlareSolverr) ResolveURL(targetURL string) (string, []http.Cookie, error) {
+// concurrent reset calls. ctx is forwarded to all HTTP calls so callers can cancel.
+func (fs *FlareSolverr) ResolveURL(ctx context.Context, targetURL string) (string, []http.Cookie, error) {
 	fs.persistentSessionMu.Lock()
 	defer fs.persistentSessionMu.Unlock()
 
-	sessionID, err := fs.getOrCreatePersistentSessionLocked()
+	sessionID, err := fs.getOrCreatePersistentSessionLocked(ctx)
 	if err != nil {
 		logging.Warnf("FlareSolverr: failed to create persistent session, using one-off request: %v", err)
-		return fs.resolveURLRequest(targetURL, "")
+		return fs.resolveURLRequest(ctx, targetURL, "")
 	}
 
-	html, cookies, err := fs.ResolveURLWithSession(targetURL, sessionID)
+	html, cookies, err := fs.ResolveURLWithSession(ctx, targetURL, sessionID)
 	if err == nil {
 		return html, cookies, nil
 	}
@@ -250,31 +250,31 @@ func (fs *FlareSolverr) ResolveURL(targetURL string) (string, []http.Cookie, err
 	// Session can become invalid if FlareSolverr restarts or rotates storage.
 	// Reset local session, recreate once, then retry.
 	logging.Warnf("FlareSolverr: persistent session %s failed, recreating: %v", sessionID, err)
-	fs.resetPersistentSessionLocked(sessionID)
+	fs.resetPersistentSessionLocked(ctx, sessionID)
 
-	retrySessionID, retryErr := fs.getOrCreatePersistentSessionLocked()
+	retrySessionID, retryErr := fs.getOrCreatePersistentSessionLocked(ctx)
 	if retryErr != nil {
 		logging.Warnf("FlareSolverr: failed to recreate persistent session, using one-off request: %v", retryErr)
-		return fs.resolveURLRequest(targetURL, "")
+		return fs.resolveURLRequest(ctx, targetURL, "")
 	}
 
-	html, cookies, err = fs.ResolveURLWithSession(targetURL, retrySessionID)
+	html, cookies, err = fs.ResolveURLWithSession(ctx, targetURL, retrySessionID)
 	if err == nil {
 		return html, cookies, nil
 	}
 
 	logging.Warnf("FlareSolverr: recreated session %s failed, using one-off request: %v", retrySessionID, err)
-	return fs.resolveURLRequest(targetURL, "")
+	return fs.resolveURLRequest(ctx, targetURL, "")
 }
 
 // getOrCreatePersistentSessionLocked gets or creates a persistent session.
 // Caller must hold persistentSessionMu.
-func (fs *FlareSolverr) getOrCreatePersistentSessionLocked() (string, error) {
+func (fs *FlareSolverr) getOrCreatePersistentSessionLocked(ctx context.Context) (string, error) {
 	if fs.persistentSessionID != "" {
 		return fs.persistentSessionID, nil
 	}
 
-	sessionID, err := fs.CreateSession()
+	sessionID, err := fs.CreateSession(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -285,7 +285,7 @@ func (fs *FlareSolverr) getOrCreatePersistentSessionLocked() (string, error) {
 
 // resetPersistentSessionLocked clears the persistent session and destroys it.
 // Caller must hold persistentSessionMu.
-func (fs *FlareSolverr) resetPersistentSessionLocked(sessionID string) {
+func (fs *FlareSolverr) resetPersistentSessionLocked(ctx context.Context, sessionID string) {
 	if sessionID == "" {
 		return
 	}
@@ -296,7 +296,7 @@ func (fs *FlareSolverr) resetPersistentSessionLocked(sessionID string) {
 	}
 
 	// Destroy session via HTTP (lock is held by caller, but DestroySession doesn't acquire it)
-	if err := fs.DestroySession(sessionID); err != nil {
+	if err := fs.DestroySession(ctx, sessionID); err != nil {
 		logging.Debugf("FlareSolverr: session destroy during reset failed for %s: %v", sessionID, err)
 	}
 
@@ -304,7 +304,7 @@ func (fs *FlareSolverr) resetPersistentSessionLocked(sessionID string) {
 	fs.sessions.Delete(sessionID)
 }
 
-func (fs *FlareSolverr) resolveURLRequest(targetURL, sessionID string) (string, []http.Cookie, error) {
+func (fs *FlareSolverr) resolveURLRequest(ctx context.Context, targetURL, sessionID string) (string, []http.Cookie, error) {
 	req := FlareSolverrRequest{
 		Cmd:        "request.get",
 		URL:        targetURL,
@@ -322,6 +322,7 @@ func (fs *FlareSolverr) resolveURLRequest(targetURL, sessionID string) (string, 
 
 	var resp FlareSolverrResponse
 	result, err := fs.client.R().
+		SetContext(ctx).
 		SetBody(req).
 		SetResult(&resp).
 		Post(fs.baseURL)
@@ -353,7 +354,7 @@ func (fs *FlareSolverr) resolveURLRequest(targetURL, sessionID string) (string, 
 }
 
 // CreateSession creates a new FlareSolverr session for cookie persistence
-func (fs *FlareSolverr) CreateSession() (string, error) {
+func (fs *FlareSolverr) CreateSession(ctx context.Context) (string, error) {
 	req := FlareSolverrRequest{
 		Cmd: "sessions.create",
 	}
@@ -363,6 +364,7 @@ func (fs *FlareSolverr) CreateSession() (string, error) {
 
 	var resp FlareSolverrResponse
 	_, err := fs.client.R().
+		SetContext(ctx).
 		SetBody(req).
 		SetResult(&resp).
 		Post(fs.baseURL)
@@ -387,7 +389,7 @@ func (fs *FlareSolverr) CreateSession() (string, error) {
 }
 
 // DestroySession destroys a FlareSolverr session via HTTP and removes it from local cache.
-func (fs *FlareSolverr) DestroySession(sessionID string) error {
+func (fs *FlareSolverr) DestroySession(ctx context.Context, sessionID string) error {
 	req := FlareSolverrRequest{
 		Cmd:     "sessions.destroy",
 		Session: sessionID,
@@ -395,6 +397,7 @@ func (fs *FlareSolverr) DestroySession(sessionID string) error {
 
 	var resp FlareSolverrResponse
 	_, err := fs.client.R().
+		SetContext(ctx).
 		SetBody(req).
 		SetResult(&resp).
 		Post(fs.baseURL)
@@ -410,8 +413,8 @@ func (fs *FlareSolverr) DestroySession(sessionID string) error {
 }
 
 // ResolveURLWithSession resolves a URL using a specific session
-func (fs *FlareSolverr) ResolveURLWithSession(targetURL, sessionID string) (string, []http.Cookie, error) {
-	html, cookies, err := fs.resolveURLRequest(targetURL, sessionID)
+func (fs *FlareSolverr) ResolveURLWithSession(ctx context.Context, targetURL, sessionID string) (string, []http.Cookie, error) {
+	html, cookies, err := fs.resolveURLRequest(ctx, targetURL, sessionID)
 	if err != nil {
 		return "", nil, fmt.Errorf("FlareSolverr request with session failed: %w", err)
 	}

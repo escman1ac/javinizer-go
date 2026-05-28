@@ -274,9 +274,15 @@ func handleScraperError(
 	startTime time.Time,
 ) scraperLoopOutcome {
 	movieID := query.movieID
-	if scraperErr == ctx.Err() {
-		logging.Debugf("[Batch %s] File %d: Context cancelled during scraper %s", job.ID, fileIndex, scraper.Name())
-		return scraperLoopOutcome{cancel: newCancelledFileResult("", movieID, startTime)}
+	if isContextErr(ctx, scraperErr) {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			logging.Debugf("[Batch %s] File %d: Context cancelled during scraper %s", job.ID, fileIndex, scraper.Name())
+			return scraperLoopOutcome{cancel: newCancelledFileResult("", movieID, startTime)}
+		}
+		// Task timeout (DeadlineExceeded) — surface as a scraper failure so the file appears
+		// in the "unidentified" section of the review UI rather than being silently hidden.
+		logging.Debugf("[Batch %s] File %d: Task timeout during scraper %s", job.ID, fileIndex, scraper.Name())
+		return scraperLoopOutcome{failure: &scraperFailure{Scraper: scraper.Name(), Err: fmt.Errorf("scraping timed out (worker timeout exceeded)")}}
 	}
 
 	logging.Debugf("[Batch %s] File %d: Scraper %s failed: %v", job.ID, fileIndex, scraper.Name(), scraperErr)
@@ -286,9 +292,13 @@ func handleScraperError(
 			job.ID, fileIndex, scraper.Name(), movieID)
 		retryResult, retryErr := safeSearch(ctx, scraper, movieID)
 		if retryErr != nil {
-			if retryErr == ctx.Err() {
-				logging.Debugf("[Batch %s] File %d: Context cancelled during scraper %s retry", job.ID, fileIndex, scraper.Name())
-				return scraperLoopOutcome{cancel: newCancelledFileResult("", movieID, startTime)}
+			if isContextErr(ctx, retryErr) {
+				if errors.Is(ctx.Err(), context.Canceled) {
+					logging.Debugf("[Batch %s] File %d: Context cancelled during scraper %s retry", job.ID, fileIndex, scraper.Name())
+					return scraperLoopOutcome{cancel: newCancelledFileResult("", movieID, startTime)}
+				}
+				logging.Debugf("[Batch %s] File %d: Task timeout during scraper %s retry", job.ID, fileIndex, scraper.Name())
+				return scraperLoopOutcome{failure: &scraperFailure{Scraper: scraper.Name(), Err: fmt.Errorf("scraping timed out (worker timeout exceeded)")}}
 			}
 			logging.Debugf("[Batch %s] File %d: Scraper %s failed with original ID: %v",
 				job.ID, fileIndex, scraper.Name(), retryErr)
@@ -298,4 +308,13 @@ func handleScraperError(
 	}
 
 	return scraperLoopOutcome{failure: &scraperFailure{Scraper: scraper.Name(), Err: scraperErr}}
+}
+
+// isContextErr returns true if err was caused by the context being done.
+// Uses errors.Is to handle wrapped errors (e.g. resty wraps ctx.Err() in *url.Error).
+func isContextErr(ctx context.Context, err error) bool {
+	if ctx.Err() == nil || err == nil {
+		return false
+	}
+	return errors.Is(err, ctx.Err())
 }

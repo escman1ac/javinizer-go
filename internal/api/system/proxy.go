@@ -140,7 +140,7 @@ func testProxy(deps *ServerDependencies) gin.HandlerFunc {
 				return
 			}
 
-			html, cookies, err := fs.ResolveURL(targetURL)
+			html, cookies, err := fs.ResolveURL(c.Request.Context(), targetURL)
 			resp.DurationMS = time.Since(start).Milliseconds()
 			if err != nil {
 				resp.Success = false

@@ -289,12 +289,18 @@ func (s *Scraper) fetchPageCtx(ctx context.Context, url string) (string, error) 
 		logging.Debugf("JavLibrary: Direct request returned status %d for %s", resp.StatusCode(), url)
 	}
 
+	// Bail out immediately if the caller's context has already expired — no point
+	// starting a FlareSolverr request that would block for minutes of retries.
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+
 	// Fallback to FlareSolverr if client was created.
 	// The flaresolverr client is only non-nil when it was successfully initialized,
 	// which happens when useFlareSolverr=true (based on scraper/global FlareSolverr config).
 	if s.flaresolverr != nil {
 		logging.Infof("JavLibrary: Using FlareSolverr for %s", url)
-		html, cookies, fsErr := s.flaresolverr.ResolveURL(url)
+		html, cookies, fsErr := s.flaresolverr.ResolveURL(ctx, url)
 		if fsErr == nil {
 			if models.IsCloudflareChallengePage(html) {
 				return "", models.NewScraperChallengeError(

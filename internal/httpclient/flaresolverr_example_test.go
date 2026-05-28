@@ -1,6 +1,7 @@
 package httpclient_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,9 +47,10 @@ func NewExampleScraper(cfg *config.Config) (*ExampleScraper, error) {
 
 // fetchPage demonstrates the pattern for fetching a page with optional FlareSolverr
 func (s *ExampleScraper) fetchPage(url string) (string, error) {
+	ctx := context.Background()
 	// Try FlareSolverr if available and enabled
 	if s.flaresolverr != nil {
-		html, cookies, err := s.flaresolverr.ResolveURL(url)
+		html, cookies, err := s.flaresolverr.ResolveURL(ctx, url)
 		if err == nil {
 			// Apply cookies to the client for subsequent requests
 			for _, c := range cookies {
@@ -71,20 +73,21 @@ func (s *ExampleScraper) fetchPage(url string) (string, error) {
 
 // Example with session persistence for multi-page scraping
 func (s *ExampleScraper) fetchMultiplePages(urls []string) (map[string]string, error) {
+	ctx := context.Background()
 	results := make(map[string]string)
 
 	if s.flaresolverr != nil {
 		// Create a session for cookie persistence
-		sessionID, err := s.flaresolverr.CreateSession()
+		sessionID, err := s.flaresolverr.CreateSession(ctx)
 		if err != nil {
 			// Fall back to individual requests
 			return s.fetchMultiplePagesDirect(urls)
 		}
-		defer func() { _ = s.flaresolverr.DestroySession(sessionID) }()
+		defer func() { _ = s.flaresolverr.DestroySession(ctx, sessionID) }()
 
 		// Fetch all pages using the same session
 		for _, url := range urls {
-			html, cookies, err := s.flaresolverr.ResolveURLWithSession(url, sessionID)
+			html, cookies, err := s.flaresolverr.ResolveURLWithSession(ctx, url, sessionID)
 			if err != nil {
 				return nil, err
 			}

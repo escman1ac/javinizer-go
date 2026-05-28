@@ -382,7 +382,7 @@ metadata:
     required_fields: []
     nfo:
         enabled: true
-        display_title: <TITLE>
+        display_title: "<TITLE>"  # Use quotes if value contains [ ] e.g. "[<ID>] <TITLE>"
         filename_template: <ID>.nfo
         first_name_order: true
         actress_language_ja: false
