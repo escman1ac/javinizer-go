@@ -82,6 +82,7 @@
 				bind:rescrapeScalarStrategy={s.rescrapeScalarStrategy}
 				onApplyPreset={s.applyRescrapePreset}
 				onExecute={s.executeRescrape}
+				onSearchCandidates={s.searchCandidates}
 			/>
 		{:else if s.currentMovie && s.currentResult}
 			<ReviewHeader
@@ -307,6 +308,7 @@
 	bind:rescrapeScalarStrategy={s.rescrapeScalarStrategy}
 	onApplyPreset={(preset) => s.applyRescrapePreset(preset)}
 	onExecute={s.bulkRescrapeMovieIds.length > 0 ? s.executeBulkRescrape : s.executeRescrape}
+	onSearchCandidates={s.searchCandidates}
 />
 
 <DestinationBrowserModal

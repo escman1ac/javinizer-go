@@ -758,8 +758,117 @@ func (s *Scraper) extractTrailerURL(_ string) string {
 // Compiled regexes for extracting video entries from JavLibrary search result pages.
 var reVideoThumbDiv = regexp.MustCompile(`<div[^>]*class="video"[^>]*>[\s\S]*?<div class="id">([^<]+)</div>`)
 var reVideoThumbID = regexp.MustCompile(`id="vid_([a-zA-Z0-9]+)"`)
+// reVideoTitle matches the first text node inside <div class="title">, skipping
+// any leading inline tags (e.g. <span>). Handles both "Play Erotic Woman" (plain
+// text) and "<span>Play Erotic Woman</span>" layouts.
+var reVideoTitle = regexp.MustCompile(`<div[^>]*class="title"[^>]*>(?:<[^>]*>)*([^<]+)`)
+var reVideoTitleAttr = regexp.MustCompile(`title="([^"]+)"`)
+var reVideoThumbImg = regexp.MustCompile(`<img[^>]+src="([^"]+)"`)
 var reLegacyHrefLang = regexp.MustCompile(`href="(/?(?:en|ja|cn|tw)/\?v=[a-zA-Z0-9]+)"`)
 var reLegacyHrefQuery = regexp.MustCompile(`href="(\?v=[a-zA-Z0-9]+)"`)
+
+// SearchCandidates implements models.CandidateSearcher. It fetches the search
+// results page and returns all video entries without fetching each detail page,
+// letting the caller show the user a picker.
+func (s *Scraper) SearchCandidates(ctx context.Context, query string) ([]*models.SearchCandidate, error) {
+	if !s.enabled {
+		return nil, fmt.Errorf("JavLibrary scraper is disabled")
+	}
+
+	searchURL, err := s.getURLCtx(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	html, err := s.fetchPageCtx(ctx, searchURL)
+	if err != nil {
+		return nil, fmt.Errorf("JavLibrary: failed to fetch search page: %w", err)
+	}
+
+	// If the search landed directly on a detail page, return it as the only candidate.
+	if strings.Contains(html, `id="video_info"`) {
+		id := query
+		if m := reVideoThumbID.FindStringSubmatch(searchURL); len(m) > 1 {
+			id = m[1]
+		}
+		return []*models.SearchCandidate{{
+			ID:        strings.ToUpper(id),
+			Title:     s.extractTitle(html, id),
+			CoverURL:  s.extractCoverURL(html),
+			DetailURL: searchURL,
+			Source:    s.Name(),
+		}}, nil
+	}
+
+	return s.extractCandidatesFromHTML(html), nil
+}
+
+// extractCandidatesFromHTML parses all video entries from a JavLibrary search
+// results page and returns them as SearchCandidates.
+func (s *Scraper) extractCandidatesFromHTML(html string) []*models.SearchCandidate {
+	matches := reVideoThumbDiv.FindAllStringSubmatch(html, -1)
+
+	var candidates []*models.SearchCandidate
+	seen := make(map[string]bool)
+
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		displayID := strings.TrimSpace(m[1])
+
+		vidMatch := reVideoThumbID.FindStringSubmatch(m[0])
+		if len(vidMatch) < 2 {
+			continue
+		}
+		vidID := vidMatch[1]
+		if seen[vidID] {
+			continue
+		}
+		seen[vidID] = true
+
+		detailURL := fmt.Sprintf("%s/%s/?v=%s", s.baseURL, s.language, vidID)
+
+		// Extract title: prefer <div class="title"><span>...</span></div>, fallback to title attr
+		title := ""
+		if tm := reVideoTitle.FindStringSubmatch(m[0]); len(tm) > 1 {
+			title = strings.TrimSpace(tm[1])
+		}
+		if title == "" {
+			if tm := reVideoTitleAttr.FindStringSubmatch(m[0]); len(tm) > 1 {
+				// The title attr is "<ID> <Title text>" — strip the ID prefix.
+				raw := strings.TrimSpace(tm[1])
+				for _, prefix := range []string{displayID + " ", strings.ToUpper(displayID) + " "} {
+					if strings.HasPrefix(raw, prefix) {
+						raw = raw[len(prefix):]
+						break
+					}
+				}
+				title = strings.TrimSpace(raw)
+			}
+		}
+
+		// Extract thumbnail URL
+		coverURL := ""
+		if im := reVideoThumbImg.FindStringSubmatch(m[0]); len(im) > 1 {
+			u := im[1]
+			if strings.HasPrefix(u, "//") {
+				u = "https:" + u
+			}
+			coverURL = u
+		}
+
+		candidates = append(candidates, &models.SearchCandidate{
+			ID:        strings.ToUpper(displayID),
+			Title:     title,
+			CoverURL:  coverURL,
+			DetailURL: detailURL,
+			Source:    s.Name(),
+		})
+	}
+
+	return candidates
+}
 
 // extractMovieURLFromHTML extracts the movie detail link from search results
 func (s *Scraper) extractMovieURLFromHTML(html string, searchID string) string {

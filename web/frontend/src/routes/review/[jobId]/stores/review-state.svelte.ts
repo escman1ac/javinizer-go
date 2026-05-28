@@ -718,6 +718,11 @@ export function createReviewState(pageStore: Page) {
 		await rescrapeController.executeRescrape(mode);
 	}
 
+	async function searchCandidates(query: string, scrapers: string[]) {
+		const resp = await apiClient.searchCandidates(query, scrapers);
+		return resp.candidates;
+	}
+
 	async function organizeAll() {
 		await organizeController.organizeAll(skipNfo, skipDownload);
 	}
@@ -979,6 +984,7 @@ export function createReviewState(pageStore: Page) {
 		openRescrapeModal,
 		openRescrapeModalForFailed,
 		executeRescrape,
+		searchCandidates,
 		organizeAll,
 		organizeSelected,
 		organizeCurrentMovie,

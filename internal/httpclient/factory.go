@@ -211,6 +211,15 @@ type FlareSolverrResponse struct {
 	Session string `json:"session"`
 }
 
+// flareSolverrHTTPBuffer is added on top of cfg.Timeout for the HTTP client.
+// FlareSolverr's browser uses maxTimeout ms internally, then sends back an HTTP 500.
+// The HTTP client timeout must exceed maxTimeout so the 500 arrives before the
+// connection is dropped. Without this buffer both timeouts fire simultaneously:
+// resty sees a connection error instead of a 500, triggers its retry logic, and
+// each failed URL can block its goroutine for (1+MaxRetries)×Timeout seconds
+// per FlareSolverr call — multiplied across session create/destroy/recreate.
+const flareSolverrHTTPBuffer = 15 * time.Second
+
 // NewFlareSolverr creates a new FlareSolverr client
 func NewFlareSolverr(cfg *config.FlareSolverrConfig) (*FlareSolverr, error) {
 	// Validate config
@@ -218,7 +227,8 @@ func NewFlareSolverr(cfg *config.FlareSolverrConfig) (*FlareSolverr, error) {
 		return nil, fmt.Errorf("FlareSolverr URL is required")
 	}
 
-	client := NewRestyClientNoProxy(time.Duration(cfg.Timeout)*time.Second, cfg.MaxRetries)
+	httpTimeout := time.Duration(cfg.Timeout)*time.Second + flareSolverrHTTPBuffer
+	client := NewRestyClientNoProxy(httpTimeout, cfg.MaxRetries)
 
 	return &FlareSolverr{
 		client:     client,

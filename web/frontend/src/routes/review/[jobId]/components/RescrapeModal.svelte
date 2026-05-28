@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { quintOut } from 'svelte/easing';
 	import { fade, scale } from 'svelte/transition';
-	import { LoaderCircle, RotateCcw, X } from 'lucide-svelte';
+	import { LoaderCircle, RotateCcw, X, Search, Check } from 'lucide-svelte';
 	import { portalToBody } from '$lib/actions/portal';
-	import type { Scraper } from '$lib/api/types';
+	import type { Scraper, SearchCandidate } from '$lib/api/types';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import ScraperSelector from '$lib/components/ScraperSelector.svelte';
@@ -23,6 +23,7 @@
 		rescrapeScalarStrategy: ScalarStrategy;
 		onApplyPreset: (preset: 'conservative' | 'gap-fill' | 'aggressive') => void;
 		onExecute: (mode: { manualSearchMode: boolean; manualSearchInput: string }) => void;
+		onSearchCandidates: (query: string, scrapers: string[]) => Promise<SearchCandidate[]>;
 	}
 
 	let {
@@ -37,8 +38,62 @@
 		rescrapePreset = $bindable(undefined),
 		rescrapeScalarStrategy = $bindable('prefer-nfo'),
 		onApplyPreset,
-		onExecute
+		onExecute,
+		onSearchCandidates
 	}: Props = $props();
+
+	let searchingCandidates = $state(false);
+	let candidates = $state<SearchCandidate[]>([]);
+	let selectedCandidate = $state<SearchCandidate | null>(null);
+	let candidateError = $state('');
+
+	// Reset candidate state when modal closes or mode changes
+	$effect(() => {
+		if (!show || !manualSearchMode) {
+			candidates = [];
+			selectedCandidate = null;
+			candidateError = '';
+			searchingCandidates = false;
+		}
+	});
+
+	async function handleSearchCandidates() {
+		const query = manualSearchInput.trim();
+		if (!query) return;
+		searchingCandidates = true;
+		candidateError = '';
+		candidates = [];
+		selectedCandidate = null;
+		try {
+			const results = await onSearchCandidates(query, selectedScrapers);
+			if (results.length === 1) {
+				// Single result — skip the picker and go straight to rescrape
+				manualSearchInput = results[0].detail_url;
+				onExecute({ manualSearchMode: true, manualSearchInput: results[0].detail_url });
+			} else if (results.length === 0) {
+				candidateError = 'No results found.';
+			} else {
+				candidates = results;
+			}
+		} catch (e: unknown) {
+			candidateError = e instanceof Error ? e.message : 'Search failed.';
+		} finally {
+			searchingCandidates = false;
+		}
+	}
+
+	function pickCandidate(c: SearchCandidate) {
+		selectedCandidate = c;
+		manualSearchInput = c.detail_url;
+		candidates = [];
+	}
+
+	function clearCandidateSelection() {
+		selectedCandidate = null;
+		manualSearchInput = '';
+		candidates = [];
+		candidateError = '';
+	}
 
 	function close() {
 		if (rescraping) return;
@@ -78,7 +133,7 @@
 					{#if !bulkMovieCount}
 					<div class="flex gap-2 mb-6 p-1 bg-accent rounded-lg">
 						<button
-							onclick={() => (manualSearchMode = false)}
+							onclick={() => { manualSearchMode = false; clearCandidateSelection(); }}
 							class="flex-1 px-4 py-2 rounded transition-all {!manualSearchMode ? 'bg-card shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}"
 						>
 							Rescrape from File
@@ -94,33 +149,103 @@
 
 					{#if manualSearchMode}
 						<div class="space-y-4">
-							<div>
-								<label for="manual-search-input" class="text-sm font-medium mb-2 block">
-									DVD ID, Content ID, or Direct URL
-								</label>
-								<input
-									id="manual-search-input"
-									type="text"
-									bind:value={manualSearchInput}
-									placeholder="e.g., IPX-123 or https://www.dmm.co.jp/..."
-									class="w-full px-3 py-2 border rounded-md bg-background focus:ring-2 focus:ring-primary focus:border-primary transition-all font-mono text-sm"
-								/>
-								<p class="text-xs text-muted-foreground mt-2">
-									Enter a DVD ID (e.g., IPX-123), content ID (e.g., ipx00535), or a direct URL from DMM or R18.dev
-								</p>
-							</div>
+							{#if selectedCandidate}
+								<!-- Confirmed selection chip -->
+								<div class="flex items-center gap-2 p-3 rounded-lg border border-primary/40 bg-primary/5">
+									{#if selectedCandidate.cover_url}
+										<img src={selectedCandidate.cover_url} alt={selectedCandidate.id} class="h-12 w-9 object-cover rounded" />
+									{/if}
+									<div class="flex-1 min-w-0">
+										<p class="font-medium text-sm truncate">{selectedCandidate.id}</p>
+										{#if selectedCandidate.title}
+											<p class="text-xs text-muted-foreground truncate">{selectedCandidate.title}</p>
+										{/if}
+										<p class="text-xs text-muted-foreground">via {selectedCandidate.source}</p>
+									</div>
+									<Check class="h-4 w-4 text-primary shrink-0" />
+									<button onclick={clearCandidateSelection} class="text-xs text-muted-foreground hover:text-foreground underline shrink-0">
+										Change
+									</button>
+								</div>
+							{:else if candidates.length > 0}
+								<!-- Candidate picker grid -->
+								<div>
+									<p class="text-sm font-medium mb-2">{candidates.length} results found — pick one:</p>
+									<div class="grid grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+										{#each candidates as candidate (candidate.detail_url)}
+											<button
+												onclick={() => pickCandidate(candidate)}
+												class="flex flex-col items-center gap-1 p-2 rounded-lg border hover:border-primary hover:bg-primary/5 transition-all text-left"
+											>
+												{#if candidate.cover_url}
+													<img
+														src={candidate.cover_url}
+														alt={candidate.id}
+														class="w-full aspect-[2/3] object-cover rounded"
+													/>
+												{:else}
+													<div class="w-full aspect-[2/3] bg-muted rounded flex items-center justify-center">
+														<span class="text-xs text-muted-foreground">No image</span>
+													</div>
+												{/if}
+												<p class="text-xs font-mono font-medium w-full truncate text-center">{candidate.id}</p>
+												{#if candidate.title}
+													<p class="text-xs text-muted-foreground w-full truncate text-center">{candidate.title}</p>
+												{/if}
+											</button>
+										{/each}
+									</div>
+								</div>
+							{:else}
+								<!-- Normal search input -->
+								<div>
+									<label for="manual-search-input" class="text-sm font-medium mb-2 block">
+										DVD ID, Content ID, or Direct URL
+									</label>
+									<div class="flex gap-2">
+										<input
+											id="manual-search-input"
+											type="text"
+											bind:value={manualSearchInput}
+											placeholder="e.g., IPX-123 or https://www.dmm.co.jp/..."
+											class="flex-1 px-3 py-2 border rounded-md bg-background focus:ring-2 focus:ring-primary focus:border-primary transition-all font-mono text-sm"
+											onkeydown={(e) => { if (e.key === 'Enter') handleSearchCandidates(); }}
+										/>
+										<Button
+											variant="outline"
+											onclick={handleSearchCandidates}
+											disabled={searchingCandidates || !manualSearchInput.trim()}
+										>
+											{#snippet children()}
+												{#if searchingCandidates}
+													<LoaderCircle class="h-4 w-4 animate-spin" />
+												{:else}
+													<Search class="h-4 w-4" />
+												{/if}
+											{/snippet}
+										</Button>
+									</div>
+									{#if candidateError}
+										<p class="text-xs text-destructive mt-2">{candidateError}</p>
+									{:else}
+										<p class="text-xs text-muted-foreground mt-2">
+											Click the search icon to see all matching results and pick the correct one, or press Enter / Rescrape to use the input directly.
+										</p>
+									{/if}
+								</div>
 
-							<div>
-								<p class="text-sm text-muted-foreground mb-4">
-									Select which scrapers to use. The results will be aggregated according to your configured priorities.
-								</p>
+								<div>
+									<p class="text-sm text-muted-foreground mb-4">
+										Select which scrapers to use. The results will be aggregated according to your configured priorities.
+									</p>
 
-								<ScraperSelector
-									scrapers={availableScrapers}
-									bind:selected={selectedScrapers}
-									disabled={false}
-								/>
-							</div>
+									<ScraperSelector
+										scrapers={availableScrapers}
+										bind:selected={selectedScrapers}
+										disabled={false}
+									/>
+								</div>
+							{/if}
 						</div>
 					{:else}
 						<p class="text-sm text-muted-foreground mb-4">
@@ -135,6 +260,7 @@
 						/>
 					{/if}
 
+					{#if !candidates.length && !searchingCandidates}
 					<div class="mt-6 space-y-4">
 						<div>
 							<h3 class="font-semibold mb-2">NFO Merge Strategy</h3>
@@ -233,26 +359,33 @@
 							</div>
 						</div>
 					</div>
+					{/if}
 				</div>
 
 				<div class="p-6 border-t flex items-center justify-end gap-3">
 					<Button variant="outline" onclick={close} disabled={rescraping}>
 						{#snippet children()}Cancel{/snippet}
 					</Button>
-					<Button
-						onclick={() => onExecute({ manualSearchMode, manualSearchInput })}
-						disabled={rescraping}
-					>
-						{#snippet children()}
-							{#if rescraping}
-								<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
-								{bulkMovieCount ? `Rescraping ${bulkMovieCount} movies...` : (manualSearchMode ? 'Scraping...' : 'Rescraping...')}
-							{:else}
-								<RotateCcw class="h-4 w-4 mr-2" />
-								{bulkMovieCount ? `Rescrape ${bulkMovieCount} movies` : (manualSearchMode ? 'Search' : 'Rescrape')}
-							{/if}
-						{/snippet}
-					</Button>
+					{#if candidates.length > 0}
+						<Button variant="outline" onclick={clearCandidateSelection}>
+							{#snippet children()}Back{/snippet}
+						</Button>
+					{:else}
+						<Button
+							onclick={() => onExecute({ manualSearchMode, manualSearchInput })}
+							disabled={rescraping || (manualSearchMode && !manualSearchInput.trim())}
+						>
+							{#snippet children()}
+								{#if rescraping}
+									<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
+									{bulkMovieCount ? `Rescraping ${bulkMovieCount} movies...` : (manualSearchMode ? 'Scraping...' : 'Rescraping...')}
+								{:else}
+									<RotateCcw class="h-4 w-4 mr-2" />
+									{bulkMovieCount ? `Rescrape ${bulkMovieCount} movies` : (manualSearchMode ? 'Rescrape' : 'Rescrape')}
+								{/if}
+							{/snippet}
+						</Button>
+					{/if}
 				</div>
 			</Card>
 		</div>

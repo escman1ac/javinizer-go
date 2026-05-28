@@ -177,6 +177,25 @@ type DirectURLScraper interface {
 	ScrapeURL(ctx context.Context, url string) (*ScraperResult, error)
 }
 
+// SearchCandidate is a lightweight result from a scraper's search results page.
+// It contains enough information to show the user a picker without fetching each
+// detail page individually.
+type SearchCandidate struct {
+	ID        string `json:"id"`         // display ID, e.g. "IPX-535"
+	Title     string `json:"title"`      // title text from the search results listing
+	CoverURL  string `json:"cover_url"`  // thumbnail image URL
+	DetailURL string `json:"detail_url"` // full URL usable as manual_search_input
+	Source    string `json:"source"`     // scraper name
+}
+
+// CandidateSearcher is an optional interface for scrapers that can return a list
+// of search candidates from a query without fetching each detail page.
+// Scrapers that implement this allow the user to pick the correct match when
+// a search returns multiple results.
+type CandidateSearcher interface {
+	SearchCandidates(ctx context.Context, query string) ([]*SearchCandidate, error)
+}
+
 // ContentIDResolver is an optional interface for scrapers that can resolve
 // a JAV ID to its DMM content-ID format (e.g., "ipx-123" -> "118BDP-00118").
 //

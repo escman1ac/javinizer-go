@@ -75,7 +75,8 @@ import type {
 	BatchExcludeRequest,
 	BatchExcludeResponse,
 	BulkRescrapeRequest,
-	BulkRescrapeResponse
+	BulkRescrapeResponse,
+	SearchCandidatesResponse
 } from './types';
 
 // Build API base URL dynamically from browser location
@@ -349,6 +350,14 @@ class APIClient {
 		return this.request<BatchRescrapeResponse>(`/api/v1/batch/${jobId}/movies/${movieId}/rescrape`, {
 			method: 'POST',
 			body: JSON.stringify(req)
+		});
+	}
+
+	// Search for movie candidates without fetching detail pages
+	async searchCandidates(query: string, scrapers: string[]): Promise<SearchCandidatesResponse> {
+		return this.request<SearchCandidatesResponse>('/api/v1/scrape/candidates', {
+			method: 'POST',
+			body: JSON.stringify({ query, scrapers })
 		});
 	}
 

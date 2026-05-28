@@ -281,6 +281,138 @@ func TestHelpers(t *testing.T) {
 	}
 }
 
+func TestExtractCandidatesFromHTML(t *testing.T) {
+	settings := config.ScraperSettings{
+		Enabled:  true,
+		Language: "en",
+		BaseURL:  "https://www.javlibrary.com",
+	}
+	s := New(settings, &config.ProxyConfig{}, config.FlareSolverrConfig{})
+
+	html := `<html><body><div class="videothumblist"><div class="videos">
+<div class="video" id="vid_javliat76u"><a href="./javliat76u.html" title="ONED-025 Play Erotic Woman"><img src="//pics.dmm.co.jp/oned025ps.jpg"><div class="id">ONED-025</div><div class="title">Play Erotic Woman</div></a></div>
+<div class="video" id="vid_javliaze24"><a href="./javliaze24.html" title="ONED-250 Other Title"><img src="//pics.dmm.co.jp/oned250ps.jpg"><div class="id">ONED-250</div><div class="title">Other Title</div></a></div>
+</div></div></body></html>`
+
+	candidates := s.extractCandidatesFromHTML(html)
+
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+
+	c := candidates[0]
+	if c.ID != "ONED-025" {
+		t.Errorf("candidates[0].ID = %q, want ONED-025", c.ID)
+	}
+	if c.Title != "Play Erotic Woman" {
+		t.Errorf("candidates[0].Title = %q, want Play Erotic Woman", c.Title)
+	}
+	if c.CoverURL != "https://pics.dmm.co.jp/oned025ps.jpg" {
+		t.Errorf("candidates[0].CoverURL = %q", c.CoverURL)
+	}
+	if c.DetailURL != "https://www.javlibrary.com/en/?v=javliat76u" {
+		t.Errorf("candidates[0].DetailURL = %q", c.DetailURL)
+	}
+	if c.Source != "javlibrary" {
+		t.Errorf("candidates[0].Source = %q", c.Source)
+	}
+
+	c2 := candidates[1]
+	if c2.ID != "ONED-250" {
+		t.Errorf("candidates[1].ID = %q, want ONED-250", c2.ID)
+	}
+	if c2.Title != "Other Title" {
+		t.Errorf("candidates[1].Title = %q, want Other Title", c2.Title)
+	}
+}
+
+func TestExtractCandidatesFromHTML_TitleAttrFallback(t *testing.T) {
+	settings := config.ScraperSettings{
+		Enabled:  true,
+		Language: "en",
+		BaseURL:  "https://www.javlibrary.com",
+	}
+	s := New(settings, &config.ProxyConfig{}, config.FlareSolverrConfig{})
+
+	// No <div class="title"> — falls back to title attribute
+	html := `<div class="video" id="vid_javmeza76q"><a href="./javmeza76q.html" title="IPX-535 Some Movie Title"><div class="id">IPX-535</div></a></div>`
+
+	candidates := s.extractCandidatesFromHTML(html)
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	}
+	if candidates[0].Title != "Some Movie Title" {
+		t.Errorf("Title = %q, want Some Movie Title", candidates[0].Title)
+	}
+}
+
+func TestSearchCandidates_MultipleResults(t *testing.T) {
+	searchHTML := `<html><body><div class="videos">
+<div class="video" id="vid_javliat76u"><a href="./javliat76u.html" title="ONED-025 Play Erotic Woman"><div class="id">ONED-025</div><div class="title">Play Erotic Woman</div></a></div>
+<div class="video" id="vid_javliaze24"><a href="./javliaze24.html" title="ONED-250 Other Title"><div class="id">ONED-250</div><div class="title">Other Title</div></a></div>
+</div></body></html>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/en/vl_searchbyid.php" {
+			_, _ = fmt.Fprint(w, searchHTML)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	settings := config.ScraperSettings{
+		Enabled:  true,
+		Language: "en",
+		BaseURL:  server.URL,
+	}
+	s := New(settings, &config.ProxyConfig{}, config.FlareSolverrConfig{})
+
+	candidates, err := s.SearchCandidates(context.Background(), "ONED")
+	if err != nil {
+		t.Fatalf("SearchCandidates error: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+	if candidates[0].DetailURL != server.URL+"/en/?v=javliat76u" {
+		t.Errorf("candidates[0].DetailURL = %q", candidates[0].DetailURL)
+	}
+	if candidates[1].ID != "ONED-250" {
+		t.Errorf("candidates[1].ID = %q, want ONED-250", candidates[1].ID)
+	}
+}
+
+func TestSearchCandidates_DirectDetailPage(t *testing.T) {
+	detailHTML := `<html><head><title>ONED-025 Play Erotic Woman - JAVLibrary</title></head><body>
+<div id="video_info"></div>
+<img id="video_jacket_img" src="https://pics.dmm.co.jp/oned025pl.jpg">
+</body></html>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, detailHTML)
+	}))
+	defer server.Close()
+
+	settings := config.ScraperSettings{
+		Enabled:  true,
+		Language: "en",
+		BaseURL:  server.URL,
+	}
+	s := New(settings, &config.ProxyConfig{}, config.FlareSolverrConfig{})
+
+	candidates, err := s.SearchCandidates(context.Background(), "ONED-025")
+	if err != nil {
+		t.Fatalf("SearchCandidates error: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate (direct detail page), got %d", len(candidates))
+	}
+	if candidates[0].Title != "Play Erotic Woman" {
+		t.Errorf("candidates[0].Title = %q, want Play Erotic Woman", candidates[0].Title)
+	}
+}
+
 func TestExtractDescription(t *testing.T) {
 	settings := config.ScraperSettings{
 		Enabled:  true,

@@ -1093,3 +1093,15 @@ export interface BatchExcludeResponse {
 	failed: BatchExcludeFailed[];
 	job: BatchJobResponse;
 }
+
+export interface SearchCandidate {
+	id: string;
+	title: string;
+	cover_url: string;
+	detail_url: string;
+	source: string;
+}
+
+export interface SearchCandidatesResponse {
+	candidates: SearchCandidate[];
+}
