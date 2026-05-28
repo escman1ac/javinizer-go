@@ -57,20 +57,10 @@
 		}
 	});
 
-	// handleManualSearch is called by the main action button in manual mode.
-	// Direct URLs bypass candidate search and rescrape immediately.
-	// ID queries fetch candidates first so the user can pick the right match.
-	async function handleManualSearch() {
-		const query = manualSearchInput.trim();
-		if (!query) return;
-
-		// Direct URL → skip candidate search, rescrape immediately
-		const isURL = query.startsWith('http://') || query.startsWith('https://');
-		if (isURL) {
-			onExecute({ manualSearchMode: true, manualSearchInput: query });
-			return;
-		}
-
+	// fetchCandidatesAndAct is the shared candidate-search logic for both modes.
+	// fallbackFn is called when candidates returns 0 results or throws (so
+	// Rescrape from File always has a working fallback to the normal flow).
+	async function fetchCandidatesAndAct(query: string, fallbackFn: () => void) {
 		searchingCandidates = true;
 		candidateError = '';
 		candidates = [];
@@ -78,18 +68,40 @@
 		try {
 			const results = await onSearchCandidates(query, selectedScrapers);
 			if (results.length === 0) {
-				candidateError = 'No results found. You can still rescrape using the ID directly.';
+				candidateError = 'No results found.';
+				fallbackFn();
 			} else if (results.length === 1) {
-				// Single result — skip the picker and rescrape immediately
 				pickAndRescrape(results[0]);
 			} else {
 				candidates = results;
 			}
-		} catch (e: unknown) {
-			candidateError = e instanceof Error ? e.message : 'Search failed.';
+		} catch {
+			fallbackFn();
 		} finally {
 			searchingCandidates = false;
 		}
+	}
+
+	// Manual Search mode: user-typed query; direct URLs bypass candidate search.
+	async function handleManualSearch() {
+		const query = manualSearchInput.trim();
+		if (!query) return;
+		if (query.startsWith('http://') || query.startsWith('https://')) {
+			onExecute({ manualSearchMode: true, manualSearchInput: query });
+			return;
+		}
+		// On 0 results, keep the error visible so the user can still click Rescrape
+		await fetchCandidatesAndAct(query, () => {
+			candidateError = 'No results found. You can still rescrape using the ID directly.';
+		});
+	}
+
+	// Rescrape from File mode: ID comes from the filename match; fall back to
+	// normal rescrape silently if candidate search fails or returns nothing.
+	async function handleRescrapeFromFile() {
+		await fetchCandidatesAndAct(rescrapeMovieId, () => {
+			onExecute({ manualSearchMode: false, manualSearchInput: '' });
+		});
 	}
 
 	function pickAndRescrape(c: SearchCandidate) {
@@ -368,9 +380,11 @@
 						</Button>
 					{:else}
 						<Button
-							onclick={manualSearchMode && !bulkMovieCount
+							onclick={bulkMovieCount
+								? () => onExecute({ manualSearchMode, manualSearchInput })
+								: manualSearchMode
 								? handleManualSearch
-								: () => onExecute({ manualSearchMode, manualSearchInput })}
+								: handleRescrapeFromFile}
 							disabled={rescraping || searchingCandidates || (manualSearchMode && !manualSearchInput.trim())}
 						>
 							{#snippet children()}
