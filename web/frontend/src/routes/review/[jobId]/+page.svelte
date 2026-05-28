@@ -64,10 +64,12 @@
 				</div>
 			</Card>
 		{:else if s.job && s.movieResults.length === 0 && s.failedResults.length > 0}
-			<UnidentifiedFilesCard
-				failedResults={s.failedResults}
-				onSearchManually={s.openRescrapeModalForFailed}
-			/>
+			{#if s.showUnidentifiedFiles}
+				<UnidentifiedFilesCard
+					failedResults={s.failedResults}
+					onSearchManually={s.openRescrapeModalForFailed}
+				/>
+			{/if}
 			<RescrapeModal
 				bind:show={s.showRescrapeModal}
 				rescraping={s.rescrapingStates.get(s.rescrapeMovieId) ?? false}
@@ -100,12 +102,15 @@
 				completenessFilter={s.completenessFilter}
 				tierCounts={s.tierCounts}
 				selectionMode={s.selectionMode}
+				failedCount={s.failedResults.length}
+				showUnidentifiedFiles={s.showUnidentifiedFiles}
 				onToggleCompletenessTier={s.toggleCompletenessTier}
 				onToggleSelectionMode={s.toggleSelectionMode}
 				onSelectAll={s.selectAllMovies}
 				onDeselectAll={s.deselectAllMovies}
 				onBulkExclude={s.bulkExcludeMovies}
 				onBulkRescrape={s.openBulkRescrapeModal}
+				onToggleUnidentifiedFiles={s.toggleShowUnidentifiedFiles}
 				onClose={() => goto('/browse')}
 				onUpdateAll={s.updateAll}
 				onOrganizeAll={s.organizeAll}
@@ -121,10 +126,12 @@
 				onContinue={() => goto('/browse')}
 			/>
 
-			<UnidentifiedFilesCard
-				failedResults={s.failedResults}
-				onSearchManually={s.openRescrapeModalForFailed}
-			/>
+			{#if s.showUnidentifiedFiles}
+				<UnidentifiedFilesCard
+					failedResults={s.failedResults}
+					onSearchManually={s.openRescrapeModalForFailed}
+				/>
+			{/if}
 
 			{#if s.viewMode === 'grid-poster' || s.viewMode === 'grid-cover'}
 				<div class="grid {s.viewMode === 'grid-cover' ? 'grid-cols-3' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6'} {s.viewMode === 'grid-cover' ? 'gap-2' : 'gap-4'}">

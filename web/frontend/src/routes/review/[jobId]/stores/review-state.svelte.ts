@@ -435,6 +435,11 @@ export function createReviewState(pageStore: Page) {
 		}
 	}
 
+	let showUnidentifiedFiles = $state(true);
+	function toggleShowUnidentifiedFiles() {
+		showUnidentifiedFiles = !showUnidentifiedFiles;
+	}
+
 	function toggleSelectionMode() {
 		selectionMode = !selectionMode;
 		if (!selectionMode) {
@@ -956,6 +961,8 @@ export function createReviewState(pageStore: Page) {
 		get filteredMovieGroups() { return filteredMovieGroups; },
 		get tierCounts() { return tierCounts; },
 		toggleCompletenessTier,
+		get showUnidentifiedFiles() { return showUnidentifiedFiles; },
+		toggleShowUnidentifiedFiles,
 		toggleSelectionMode,
 		bulkExcludeMovies,
 		get bulkRescraping() { return bulkRescraping; },

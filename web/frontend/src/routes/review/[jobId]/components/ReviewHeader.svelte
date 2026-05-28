@@ -21,12 +21,15 @@
 		completenessFilter?: Set<CompletenessTier>;
 		tierCounts?: Record<string, number>;
 		selectionMode?: boolean;
+		failedCount?: number;
+		showUnidentifiedFiles?: boolean;
 		onToggleCompletenessTier?: (tier: CompletenessTier) => void;
 		onToggleSelectionMode?: () => void;
 		onSelectAll?: () => void;
 		onDeselectAll?: () => void;
 		onBulkExclude?: () => void;
 		onBulkRescrape?: () => void;
+		onToggleUnidentifiedFiles?: () => void;
 		onClose: () => void;
 		onUpdateAll: () => void;
 		onOrganizeAll: () => void;
@@ -50,12 +53,15 @@
 		completenessFilter = new Set<CompletenessTier>(['incomplete', 'partial', 'complete']),
 		tierCounts = { incomplete: 0, partial: 0, complete: 0 },
 		selectionMode = false,
+		failedCount = 0,
+		showUnidentifiedFiles = true,
 		onToggleCompletenessTier,
 		onToggleSelectionMode,
 		onSelectAll,
 		onDeselectAll,
 		onBulkExclude,
 		onBulkRescrape,
+		onToggleUnidentifiedFiles,
 		onClose,
 		onUpdateAll,
 		onOrganizeAll
@@ -153,6 +159,19 @@
 		{/if}
 	</div>
 </div>
+
+{#if failedCount > 0}
+	<div class="flex items-center gap-1 mb-4">
+		<button
+			class="inline-flex items-center gap-1.5 h-9 px-3 text-sm font-medium rounded-md border transition-colors
+				{showUnidentifiedFiles ? 'bg-secondary text-secondary-foreground border-border' : 'bg-transparent text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'}"
+			onclick={() => onToggleUnidentifiedFiles?.()}
+		>
+			<span class="w-2 h-2 rounded-full {showUnidentifiedFiles ? 'bg-orange-500' : 'bg-muted-foreground/30'}"></span>
+			Unidentified ({failedCount})
+		</button>
+	</div>
+{/if}
 
 {#if viewMode === 'grid-poster' || viewMode === 'grid-cover'}
 	<div class="flex items-center gap-3 mb-4">
