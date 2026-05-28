@@ -434,8 +434,15 @@ func (s *Scraper) fetchPageCtx(ctx context.Context, targetURL string) (string, e
 	}
 
 	if s.settings.UseFlareSolverr && s.flaresolverr != nil {
-		logging.Debugf("JavDB: Resolving via FlareSolverr: %s", targetURL)
-		html, cookies, fsErr := s.flaresolverr.ResolveURL(ctx, targetURL)
+		flareSolverrURL := targetURL
+		if resp != nil && resp.RawResponse != nil && resp.RawResponse.Request != nil {
+			if finalURL := resp.RawResponse.Request.URL.String(); finalURL != targetURL {
+				logging.Debugf("JavDB: Direct request redirected %s → %s; using redirected URL for FlareSolverr", targetURL, finalURL)
+				flareSolverrURL = finalURL
+			}
+		}
+		logging.Debugf("JavDB: Resolving via FlareSolverr: %s", flareSolverrURL)
+		html, cookies, fsErr := s.flaresolverr.ResolveURL(ctx, flareSolverrURL)
 		if fsErr == nil {
 			s.cookieMu.Lock()
 			for _, c := range cookies {
