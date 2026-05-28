@@ -170,7 +170,36 @@
 					</div>
 					{/if}
 
-					{#if manualSearchMode}
+					{#if candidates.length > 0}
+						<!-- Candidate picker grid — shown for both modes -->
+						<div>
+							<p class="text-sm font-medium mb-2">{candidates.length} results found — pick one:</p>
+							<div class="grid grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+								{#each candidates as candidate (candidate.detail_url)}
+									<button
+										onclick={() => pickAndRescrape(candidate)}
+										class="flex flex-col items-center gap-1 p-2 rounded-lg border hover:border-primary hover:bg-primary/5 transition-all text-left"
+									>
+										{#if candidate.cover_url}
+											<img
+												src={candidate.cover_url}
+												alt={candidate.id}
+												class="w-full aspect-[2/3] object-cover rounded"
+											/>
+										{:else}
+											<div class="w-full aspect-[2/3] bg-muted rounded flex items-center justify-center">
+												<span class="text-xs text-muted-foreground">No image</span>
+											</div>
+										{/if}
+										<p class="text-xs font-mono font-medium w-full truncate text-center">{candidate.id}</p>
+										{#if candidate.title}
+											<p class="text-xs text-muted-foreground w-full truncate text-center">{candidate.title}</p>
+										{/if}
+									</button>
+								{/each}
+							</div>
+						</div>
+					{:else if manualSearchMode}
 						<div class="space-y-4">
 							{#if selectedCandidate}
 								<!-- Confirmed selection chip -->
@@ -190,37 +219,8 @@
 										Change
 									</button>
 								</div>
-							{:else if candidates.length > 0}
-								<!-- Candidate picker grid -->
-								<div>
-									<p class="text-sm font-medium mb-2">{candidates.length} results found — pick one:</p>
-									<div class="grid grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
-										{#each candidates as candidate (candidate.detail_url)}
-											<button
-												onclick={() => pickAndRescrape(candidate)}
-												class="flex flex-col items-center gap-1 p-2 rounded-lg border hover:border-primary hover:bg-primary/5 transition-all text-left"
-											>
-												{#if candidate.cover_url}
-													<img
-														src={candidate.cover_url}
-														alt={candidate.id}
-														class="w-full aspect-[2/3] object-cover rounded"
-													/>
-												{:else}
-													<div class="w-full aspect-[2/3] bg-muted rounded flex items-center justify-center">
-														<span class="text-xs text-muted-foreground">No image</span>
-													</div>
-												{/if}
-												<p class="text-xs font-mono font-medium w-full truncate text-center">{candidate.id}</p>
-												{#if candidate.title}
-													<p class="text-xs text-muted-foreground w-full truncate text-center">{candidate.title}</p>
-												{/if}
-											</button>
-										{/each}
-									</div>
-								</div>
 							{:else}
-								<!-- Normal search input -->
+								<!-- Manual search input -->
 								<div>
 									<label for="manual-search-input" class="text-sm font-medium mb-2 block">
 										DVD ID, Content ID, or Direct URL
@@ -246,7 +246,6 @@
 									<p class="text-sm text-muted-foreground mb-4">
 										Select which scrapers to use. The results will be aggregated according to your configured priorities.
 									</p>
-
 									<ScraperSelector
 										scrapers={availableScrapers}
 										bind:selected={selectedScrapers}
@@ -256,11 +255,11 @@
 							{/if}
 						</div>
 					{:else}
+						<!-- Rescrape from File -->
 						<p class="text-sm text-muted-foreground mb-4">
 							Select which scrapers to use for fetching fresh metadata. The results will be
 							aggregated according to your configured priorities.
 						</p>
-
 						<ScraperSelector
 							scrapers={availableScrapers}
 							bind:selected={selectedScrapers}
