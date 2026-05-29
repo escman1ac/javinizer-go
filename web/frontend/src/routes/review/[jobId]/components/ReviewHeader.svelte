@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Button from '$lib/components/ui/Button.svelte';
-	import { ChevronDown, ChevronUp, Image, LayoutGrid, List, LoaderCircle, Play, RefreshCw, Settings2, X, CheckSquare, Square, Trash2, RotateCcw, MousePointerClick } from 'lucide-svelte';
+	import { ChevronDown, ChevronUp, Image, LayoutGrid, List, LoaderCircle, Play, RefreshCw, Save, Settings2, X, CheckSquare, Square, Trash2, RotateCcw, MousePointerClick } from 'lucide-svelte';
 	import type { CompletenessTier } from '$lib/utils/completeness';
 
 	interface Props {
@@ -23,6 +23,9 @@
 		selectionMode?: boolean;
 		failedCount?: number;
 		showUnidentifiedFiles?: boolean;
+		hasEdits?: boolean;
+		savingAll?: boolean;
+		onSaveAll?: () => void;
 		onToggleCompletenessTier?: (tier: CompletenessTier) => void;
 		onToggleSelectionMode?: () => void;
 		onSelectAll?: () => void;
@@ -55,6 +58,9 @@
 		selectionMode = false,
 		failedCount = 0,
 		showUnidentifiedFiles = true,
+		hasEdits = false,
+		savingAll = false,
+		onSaveAll,
 		onToggleCompletenessTier,
 		onToggleSelectionMode,
 		onSelectAll,
@@ -128,6 +134,18 @@
 				{/snippet}
 			</Button>
 		</div>
+		{#if hasEdits}
+			<Button variant="outline" onclick={() => onSaveAll?.()} disabled={savingAll || organizing}>
+				{#snippet children()}
+					{#if savingAll}
+						<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
+					{:else}
+						<Save class="h-4 w-4 mr-2" />
+					{/if}
+					{savingAll ? 'Saving...' : 'Save All'}
+				{/snippet}
+			</Button>
+		{/if}
 		<Button variant="outline" onclick={onClose} disabled={organizing}>
 			{#snippet children()}
 				<X class="h-4 w-4 mr-2" />
@@ -160,16 +178,20 @@
 	</div>
 </div>
 
-{#if failedCount > 0}
+{#snippet unidentifiedToggle()}
+	<button
+		class="inline-flex items-center gap-1.5 h-9 px-3 text-sm font-medium rounded-md border transition-colors
+			{showUnidentifiedFiles ? 'bg-secondary text-secondary-foreground border-border' : 'bg-transparent text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'}"
+		onclick={() => onToggleUnidentifiedFiles?.()}
+	>
+		<span class="w-2 h-2 rounded-full {showUnidentifiedFiles ? 'bg-orange-500' : 'bg-muted-foreground/30'}"></span>
+		Unidentified ({failedCount})
+	</button>
+{/snippet}
+
+{#if failedCount > 0 && viewMode === 'detail'}
 	<div class="flex items-center gap-1 mb-4">
-		<button
-			class="inline-flex items-center gap-1.5 h-9 px-3 text-sm font-medium rounded-md border transition-colors
-				{showUnidentifiedFiles ? 'bg-secondary text-secondary-foreground border-border' : 'bg-transparent text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'}"
-			onclick={() => onToggleUnidentifiedFiles?.()}
-		>
-			<span class="w-2 h-2 rounded-full {showUnidentifiedFiles ? 'bg-orange-500' : 'bg-muted-foreground/30'}"></span>
-			Unidentified ({failedCount})
-		</button>
+		{@render unidentifiedToggle()}
 	</div>
 {/if}
 
@@ -205,6 +227,9 @@
 		{/if}
 		<div class="h-4 w-px bg-border"></div>
 		<div class="inline-flex items-center gap-1">
+			{#if failedCount > 0}
+				{@render unidentifiedToggle()}
+			{/if}
 			{#each tierConfig as { tier, label, dotClass }}
 				{@const count = tierCounts[tier] ?? 0}
 				{@const isActive = completenessFilter.has(tier)}

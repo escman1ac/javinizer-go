@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- "Save All" button in the review header (appears only when edits exist) and a per-movie "Save" button next to Remove in the detail view, persisting manual metadata edits to the server so they survive a page refresh
+
+### Fixed
+
+- Review poster preview not refreshing after a manual rescrape: the rescrape now appends a cache-busting `?v=` param to the temp cropped-poster URL so the browser loads the new image immediately instead of the cached one
+- Manually entered Poster URL on the review page now clears the stale crop state, so the preview updates to the new image instead of continuing to show the previously cropped poster
+- Moved the "Unidentified (N)" filter toggle inline with the completeness filters (before Incomplete) in grid views, while keeping it available in detail view
+
 ## [v0.3.4-alpha] - 2026-05-02
 
 ### Fixed

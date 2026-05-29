@@ -105,6 +105,9 @@
 				selectionMode={s.selectionMode}
 				failedCount={s.failedResults.length}
 				showUnidentifiedFiles={s.showUnidentifiedFiles}
+				hasEdits={s.hasAnyEdits}
+				savingAll={s.savingAll}
+				onSaveAll={s.saveAllEdits}
 				onToggleCompletenessTier={s.toggleCompletenessTier}
 				onToggleSelectionMode={s.toggleSelectionMode}
 				onSelectAll={s.selectAllMovies}
@@ -190,7 +193,9 @@
 						movieResultsLength={s.movieResults.length}
 						currentMovieId={s.currentMovie.id}
 						hasChanges={s.reviewPageController.hasChanges(s.currentResult.file_path)}
+						saving={s.savingCurrentMovie}
 						onExclude={s.reviewPageController.excludeCurrentMovie}
+						onSave={s.saveCurrentMovie}
 					/>
 
 					<SourceFilesCard

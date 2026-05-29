@@ -128,25 +128,76 @@ export function createReviewMutations(deps: ReviewMutationsDeps) {
 		}
 	}));
 
+	// The "Title" field in the editor binds to display_title, so the canonical
+	// title must be synced from it before persisting.
+	function buildMovieToSave(movie: Movie): Movie {
+		const movieToSave = { ...movie };
+		if (movieToSave.display_title) {
+			movieToSave.title = movieToSave.display_title;
+		}
+		return movieToSave;
+	}
+
+	// Optimistically reflect a saved movie in local job state so the UI updates
+	// without waiting for the background refetch.
+	function applySavedMovieToJob(filePath: string, movie: Movie) {
+		const currentJob = deps.getJob();
+		if (!currentJob || !currentJob.results[filePath]) return;
+		const updatedJob: BatchJobResponse = {
+			...currentJob,
+			results: { ...currentJob.results }
+		};
+		updatedJob.results[filePath] = {
+			...(updatedJob.results[filePath] as FileResult),
+			data: movie,
+			movie_id: movie.id
+		};
+		deps.skipJobSync();
+		deps.setJob(updatedJob);
+	}
+
 	const saveEditsMutation = createMutation(() => ({
 		mutationFn: async () => {
-			const savePromises = Array.from(deps.getEditedMovies().entries()).map(([filePath, movie]) => {
-				const movieToSave = { ...movie };
-				if (movieToSave.display_title) {
-					movieToSave.title = movieToSave.display_title;
-				}
-				return deps.updateBatchMovie(deps.getJobId(), movieToSave.id, movieToSave);
-			});
+			const entries = Array.from(deps.getEditedMovies().entries()).map(
+				([filePath, movie]) => [filePath, buildMovieToSave(movie)] as [string, Movie]
+			);
 
-			if (savePromises.length > 0) {
-				await Promise.all(savePromises);
+			if (entries.length > 0) {
+				await Promise.all(
+					entries.map(([, movie]) => deps.updateBatchMovie(deps.getJobId(), movie.id, movie))
+				);
 			}
+			return entries;
 		},
-		onSuccess: () => {
+		onSuccess: (entries: [string, Movie][]) => {
+			for (const [filePath, movie] of entries) {
+				applySavedMovieToJob(filePath, movie);
+				deps.getEditedMovies().delete(filePath);
+			}
+			if (entries.length > 0) {
+				deps.toastSuccess(`Saved ${entries.length} movie${entries.length !== 1 ? 's' : ''}`);
+			}
 			invalidateJobQueries();
 		},
 		onError: (err: Error) => {
 			deps.toastError(`Failed to save edits: ${err.message}`);
+		}
+	}));
+
+	const saveMovieMutation = createMutation(() => ({
+		mutationFn: async ({ filePath, movie }: { filePath: string; movie: Movie }) => {
+			const movieToSave = buildMovieToSave(movie);
+			await deps.updateBatchMovie(deps.getJobId(), movieToSave.id, movieToSave);
+			return { filePath, movie: movieToSave };
+		},
+		onSuccess: ({ filePath, movie }: { filePath: string; movie: Movie }) => {
+			applySavedMovieToJob(filePath, movie);
+			deps.getEditedMovies().delete(filePath);
+			deps.toastSuccess('Changes saved');
+			invalidateJobQueries();
+		},
+		onError: (err: Error) => {
+			deps.toastError(`Failed to save changes: ${err.message}`);
 		}
 	}));
 
@@ -246,6 +297,7 @@ export function createReviewMutations(deps: ReviewMutationsDeps) {
 		bulkExcludeMutation,
 		bulkRescrapeMutation,
 		saveEditsMutation,
+		saveMovieMutation,
 		posterCropMutation
 	};
 }

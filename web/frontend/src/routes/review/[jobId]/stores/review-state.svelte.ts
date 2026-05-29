@@ -567,8 +567,18 @@ export function createReviewState(pageStore: Page) {
 	}
 
 	async function saveAllEdits() {
-		return mutations.saveEditsMutation.mutateAsync();
+		await mutations.saveEditsMutation.mutateAsync();
 	}
+
+	async function saveCurrentMovie() {
+		if (!currentResult) return;
+		const filePath = currentResult.file_path;
+		const movie = editedMovies.get(filePath);
+		if (!movie) return;
+		return mutations.saveMovieMutation.mutateAsync({ filePath, movie });
+	}
+
+	const hasAnyEdits = $derived(editedMovies.size > 0);
 
 	const organizeController = createOrganizeController({
 		getJobId: () => jobId,
@@ -954,6 +964,10 @@ export function createReviewState(pageStore: Page) {
 		resetPoster,
 		useScreenshotAsPoster,
 		saveAllEdits,
+		saveCurrentMovie,
+		get hasAnyEdits() { return hasAnyEdits; },
+		get savingAll() { return mutations.saveEditsMutation.isPending; },
+		get savingCurrentMovie() { return mutations.saveMovieMutation.isPending; },
 		get selectedMovieIds() { return selectedMovieIds; },
 		get selectedCount() { return selectedCount; },
 		get allSelected() { return allSelected; },

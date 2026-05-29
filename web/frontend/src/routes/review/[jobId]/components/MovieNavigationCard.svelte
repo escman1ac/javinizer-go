@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronLeft, ChevronRight, CircleAlert, Trash2 } from 'lucide-svelte';
+	import { ChevronLeft, ChevronRight, CircleAlert, LoaderCircle, Save, Trash2 } from 'lucide-svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 
@@ -8,7 +8,9 @@
 		movieResultsLength: number;
 		currentMovieId: string;
 		hasChanges: boolean;
+		saving?: boolean;
 		onExclude: () => void;
+		onSave?: () => void;
 	}
 
 	let {
@@ -16,7 +18,9 @@
 		movieResultsLength,
 		currentMovieId,
 		hasChanges,
-		onExclude
+		saving = false,
+		onExclude,
+		onSave
 	}: Props = $props();
 
 	const pageOptions = $derived(
@@ -70,6 +74,24 @@
 		</div>
 
 		<div class="flex gap-2">
+			{#if hasChanges}
+				<Button
+					variant="outline"
+					onclick={() => onSave?.()}
+					disabled={saving}
+					class="text-primary hover:bg-primary hover:text-primary-foreground"
+				>
+					{#snippet children()}
+						{#if saving}
+							<LoaderCircle class="h-4 w-4 mr-2 animate-spin" />
+						{:else}
+							<Save class="h-4 w-4 mr-2" />
+						{/if}
+						{saving ? 'Saving...' : 'Save'}
+					{/snippet}
+				</Button>
+			{/if}
+
 			<Button
 				variant="outline"
 				onclick={onExclude}

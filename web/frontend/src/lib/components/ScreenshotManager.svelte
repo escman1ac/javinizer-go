@@ -62,6 +62,14 @@
 		clearCropState = false;
 	}
 
+	// A manually entered poster URL is a fresh full image, so any prior crop
+	// (should_crop_poster / cropped_poster_url) no longer applies and must be
+	// cleared — otherwise resolvePosterUrl keeps showing the stale cropped poster.
+	function onPosterUrlChange() {
+		clearCropState = true;
+		notifyParent();
+	}
+
 	function addScreenshot() {
 		if (newScreenshotUrl.trim()) {
 			screenshots = [...screenshots, newScreenshotUrl.trim()];
@@ -163,7 +171,7 @@
 					id="poster-url"
 					type="url"
 					bind:value={posterUrl}
-					onchange={notifyParent}
+					onchange={onPosterUrlChange}
 					placeholder="https://..."
 					class="w-full px-3 py-2 border rounded-md bg-background focus:ring-2 focus:ring-primary focus:border-primary transition-all font-mono text-sm"
 				/>

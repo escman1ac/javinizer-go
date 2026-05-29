@@ -3,12 +3,43 @@ package batch
 import (
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/javinizer/javinizer-go/internal/logging"
 	"github.com/javinizer/javinizer-go/internal/models"
 	"github.com/javinizer/javinizer-go/internal/worker"
 )
+
+// bustTempPosterCache appends a cache-busting query param to a temp poster URL.
+// A rescrape overwrites the cropped poster file at the same path, so without
+// this the browser keeps serving the cached image until a full page refresh.
+// The temp poster route matches by filename and ignores the query string, so
+// this only affects browser caching. Mirrors the behaviour of the poster-crop
+// and poster-from-URL endpoints in movie_edit.go.
+func bustTempPosterCache(rawURL string) string {
+	if rawURL == "" || strings.Contains(rawURL, "v=") {
+		return rawURL
+	}
+	separator := "?"
+	if strings.Contains(rawURL, "?") {
+		separator = "&"
+	}
+	return fmt.Sprintf("%s%sv=%d", rawURL, separator, time.Now().UnixMilli())
+}
+
+// applyPosterCacheBusting refreshes the cache-busting param on a rescraped
+// movie's temp poster URLs so the review UI shows the new image immediately.
+func applyPosterCacheBusting(movie *models.Movie) {
+	if movie == nil {
+		return
+	}
+	movie.CroppedPosterURL = bustTempPosterCache(movie.CroppedPosterURL)
+	if strings.Contains(movie.PosterURL, "/api/v1/temp/posters/") {
+		movie.PosterURL = bustTempPosterCache(movie.PosterURL)
+	}
+}
 
 // rescrapeBatchMovie godoc
 // @Summary Rescrape movie in batch job
@@ -103,6 +134,11 @@ func rescrapeBatchMovie(deps *ServerDependencies) gin.HandlerFunc {
 				movie = m
 			}
 		}
+
+		// Refresh the cache-busting param on the temp poster URLs before the movie
+		// is stored in job state, so the review UI loads the new image immediately
+		// (the rescrape overwrites the poster file at the same path).
+		applyPosterCacheBusting(movie)
 
 		updateRes := validateAndUpdateResult(job, result, lookup.foundFilePath, lookup.capturedRevision, movie, lookup.oldMovieID, cfg, jobID)
 		if updateRes.shouldAbort {
