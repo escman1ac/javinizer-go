@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/javinizer/javinizer-go/internal/config"
+	"github.com/javinizer/javinizer-go/internal/models"
 	"github.com/javinizer/javinizer-go/internal/scraperutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -159,7 +160,7 @@ func TestParseActresses(t *testing.T) {
 	}
 }
 
-// TestNormalizeMovieURL tests URL normalization
+// TestNormalizeMovieURL tests URL normalization to the JSON API endpoint
 func TestNormalizeMovieURL(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -169,24 +170,45 @@ func TestNormalizeMovieURL(t *testing.T) {
 		ok    bool
 	}{
 		{
-			name:  "movie URL with JSON suffix",
+			name:  "legacy movie URL with JSON suffix",
 			input: "https://www.libredmm.com/movies/IPX-535.json",
 			base:  "https://www.libredmm.com",
-			want:  "https://www.libredmm.com/movies/IPX-535.json",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX-535",
 			ok:    true,
 		},
 		{
-			name:  "movie URL without JSON suffix",
+			name:  "movie page URL",
 			input: "https://www.libredmm.com/movies/IPX-535",
 			base:  "https://www.libredmm.com",
-			want:  "https://www.libredmm.com/movies/IPX-535.json",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX-535",
+			ok:    true,
+		},
+		{
+			name:  "movie page URL with pseudo code",
+			input: "https://www.libredmm.com/movies/SW-001~45262",
+			base:  "https://www.libredmm.com",
+			want:  "https://www.libredmm.com/api/v1/movies/SW-001~45262",
+			ok:    true,
+		},
+		{
+			name:  "API URL is idempotent",
+			input: "https://www.libredmm.com/api/v1/movies/IPX-535",
+			base:  "https://www.libredmm.com",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX-535",
+			ok:    true,
+		},
+		{
+			name:  "cid URL",
+			input: "https://www.libredmm.com/cid/ipx00535",
+			base:  "https://www.libredmm.com",
+			want:  "https://www.libredmm.com/api/v1/movies/ipx00535",
 			ok:    true,
 		},
 		{
 			name:  "search URL with query",
 			input: "https://www.libredmm.com/search?q=IPX535",
 			base:  "https://www.libredmm.com",
-			want:  "https://www.libredmm.com/search?q=IPX535&format=json",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX535",
 			ok:    true,
 		},
 		{
@@ -221,7 +243,7 @@ func TestNormalizeMovieURL(t *testing.T) {
 			name:  "URL with special characters in path",
 			input: "https://www.libredmm.com/movies/IPX%20535",
 			base:  "https://www.libredmm.com",
-			want:  "https://www.libredmm.com/movies/IPX%20535.json",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX%20535",
 			ok:    true,
 		},
 	}
@@ -235,46 +257,31 @@ func TestNormalizeMovieURL(t *testing.T) {
 	}
 }
 
-// TestBuildSearchURL tests search URL building
-func TestBuildSearchURL(t *testing.T) {
-	tests := []struct {
-		name  string
-		base  string
-		query string
-		want  string
-	}{
-		{
-			name:  "standard query",
-			base:  "https://www.libredmm.com",
-			query: "IPX535",
-			want:  "https://www.libredmm.com/search?q=IPX535&format=json",
-		},
-		{
-			name:  "query with spaces",
-			base:  "https://www.libredmm.com",
-			query: "IPX 535",
-			want:  "https://www.libredmm.com/search?q=IPX+535&format=json",
-		},
-		{
-			name:  "base with trailing slash",
-			base:  "https://www.libredmm.com/",
-			query: "IPX535",
-			want:  "https://www.libredmm.com/search?q=IPX535&format=json",
-		},
-		{
-			name:  "empty query",
-			base:  "https://www.libredmm.com",
-			query: "",
-			want:  "https://www.libredmm.com/search?q=&format=json",
-		},
-	}
+// TestBuildAPIURL tests API and page URL building
+func TestBuildAPIURL(t *testing.T) {
+	assert.Equal(t, "https://www.libredmm.com/api/v1/movies/IPX-535", buildAPIURL("https://www.libredmm.com", "IPX-535"))
+	assert.Equal(t, "https://www.libredmm.com/api/v1/movies/IPX-535", buildAPIURL("https://www.libredmm.com/", " IPX-535 "))
+	assert.Equal(t, "https://www.libredmm.com/api/v1/movies/IPX%20535", buildAPIURL("https://www.libredmm.com", "IPX 535"))
+	assert.Equal(t, "https://www.libredmm.com/api/v1/movies/a%2Fb", buildAPIURL("https://www.libredmm.com", "a/b"))
+	assert.Equal(t, "https://www.libredmm.com/movies/SW-001~45262", buildPageURL("https://www.libredmm.com/", "SW-001~45262"))
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildSearchURL(tt.base, tt.query)
-			assert.Equal(t, tt.want, result)
-		})
-	}
+// TestPollDelay tests Retry-After handling
+func TestPollDelay(t *testing.T) {
+	fallback := 1500 * time.Millisecond
+	assert.Equal(t, fallback, pollDelay("", fallback))
+	assert.Equal(t, fallback, pollDelay("garbage", fallback))
+	assert.Equal(t, fallback, pollDelay("0", fallback))
+	assert.Equal(t, 3*time.Second, pollDelay("3", fallback))
+	assert.Equal(t, maxPollInterval, pollDelay("30", fallback))
+}
+
+// TestMovieDisplayID tests display ID derivation
+func TestMovieDisplayID(t *testing.T) {
+	assert.Equal(t, "SW-001", movieDisplayID("SW-001", "SW-001~45262"))
+	assert.Equal(t, "SW-001", movieDisplayID("", "SW-001~45262"))
+	assert.Equal(t, "IPX-123", movieDisplayID("", "IPX-123"))
+	assert.Equal(t, "", movieDisplayID("", ""))
 }
 
 // TestExtractIDFromURL tests ID extraction from URLs
@@ -679,102 +686,99 @@ func TestIsHTTPURL(t *testing.T) {
 }
 
 // TestWaitForRateLimit tests rate limiting
-// TestPayloadToResult tests result conversion from payload
+// TestPayloadToResult tests result conversion from the API movie payload
 func TestPayloadToResult(t *testing.T) {
-	tests := []struct {
-		name       string
-		payload    *moviePayload
-		sourceURL  string
-		fallbackID string
-		wantErr    bool
-	}{
-		{
-			name: "full payload",
-			payload: &moviePayload{
-				NormalizedID:      "IPX-535",
-				Subtitle:          "ipx535",
-				Title:             "Test Movie",
-				Description:       "Test description",
-				Date:              "2024-01-15T00:00:00Z",
-				Directors:         []string{"Director A"},
-				Makers:            []string{"Maker A"},
-				Labels:            []string{"Label A"},
-				Genres:            []string{"Genre A"},
-				Actresses:         []actressPayload{{Name: "Actress A", ImageURL: "https://example.com/a.jpg"}},
-				CoverImageURL:     "https://example.com/cover.jpg",
-				ThumbnailImageURL: "https://example.com/thumb.jpg",
-				SampleImageURLs:   []string{"https://example.com/s1.jpg"},
-				Review:            8.5,
-				URL:               "https://www.libredmm.com/movies/IPX-535",
-			},
-			sourceURL:  "https://www.libredmm.com/movies/IPX-535.json",
-			fallbackID: "IPX535",
-			wantErr:    false,
+	payload := &moviePayload{
+		Code:           "IPX-123",
+		BaseCode:       "IPX-123",
+		PseudoCode:     "IPX-123~1219",
+		Title:          " Test Movie ",
+		ReleaseDate:    "2018-03-31",
+		RuntimeMinutes: 119,
+		Description:    "Test description",
+		Cover: coverPayload{
+			URL:      "https://pics.dmm.co.jp/digital/video/ipx00123/ipx00123pl.jpg",
+			ThumbURL: "https://pics.dmm.co.jp/digital/video/ipx00123/ipx00123ps.jpg",
 		},
-		{
-			name:       "nil payload",
-			payload:    nil,
-			sourceURL:  "https://www.libredmm.com/search?q=IPX535",
-			fallbackID: "IPX535",
-			wantErr:    false,
+		SampleImages: []string{
+			"https://pics.dmm.co.jp/digital/video/ipx00123/ipx00123jp-1.jpg",
+			"https://pics.dmm.co.jp/digital/video/ipx00123/ipx00123jp-1.jpg",
 		},
-		{
-			name:       "empty payload uses fallback",
-			payload:    &moviePayload{},
-			sourceURL:  "https://www.libredmm.com/movies/EMPTY",
-			fallbackID: "FALLBACK-ID",
-			wantErr:    false,
-		},
-		{
-			name: "review zero not set",
-			payload: &moviePayload{
-				NormalizedID: "IPX-535",
-				Subtitle:     "ipx535",
-				Title:        "Test",
-				Review:       0,
-			},
-			sourceURL:  "https://www.libredmm.com/movies/IPX-535.json",
-			fallbackID: "IPX535",
-			wantErr:    false,
-		},
-		{
-			name: "volume zero runtime not set",
-			payload: &moviePayload{
-				NormalizedID: "IPX-535",
-				Subtitle:     "ipx535",
-				Title:        "Test",
-				Volume:       0,
-			},
-			sourceURL:  "https://www.libredmm.com/movies/IPX-535.json",
-			fallbackID: "IPX535",
-			wantErr:    false,
+		Review:    &reviewPayload{Average: 3.2899999618530273, Count: 7},
+		Actresses: []actressPayload{{ID: 1001592, Name: "天海つばさ", Ruby: "あまみつばさ", ImageURL: "http://pics.dmm.co.jp/mono/actjpgs/amami_tubasa.jpg"}},
+		Makers:    []namedEntity{{ID: 1219, Name: "アイデアポケット"}},
+		Labels:    []namedEntity{{ID: 1561, Name: "ティッシュ"}},
+		Series:    []namedEntity{},
+		Directors: []namedEntity{{ID: 290, Name: "ザック荒井"}},
+		Genres:    []namedEntity{{ID: 5005, Name: "アナル"}, {ID: 1, Name: "アナル"}, {ID: 2, Name: "単体作品"}},
+		Products: []productPayload{
+			{ContentID: "ipx00123dl", Preferred: false},
+			{ContentID: "ipx00123", Preferred: true},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := payloadToResult(tt.payload, tt.sourceURL, tt.fallbackID, nil)
-
-			if tt.wantErr {
-				assert.Nil(t, result)
-			} else {
-				assert.NotNil(t, result)
-				assert.Equal(t, "libredmm", result.Source)
-
-				if tt.payload != nil {
-					if tt.payload.NormalizedID != "" {
-						assert.Equal(t, tt.payload.NormalizedID, result.ID)
-					}
-					if tt.payload.Title != "" {
-						assert.Equal(t, tt.payload.Title, result.Title)
-					}
-					if tt.payload.Description != "" {
-						assert.Equal(t, tt.payload.Description, result.Description)
-					}
-				}
-			}
-		})
+	client := &http.Client{
+		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("network disabled")
+		}),
 	}
+
+	result := payloadToResult(payload, "https://www.libredmm.com", "ipx123", client)
+	require.NotNil(t, result)
+	assert.Equal(t, "libredmm", result.Source)
+	assert.Equal(t, "ja", result.Language)
+	assert.Equal(t, "IPX-123", result.ID)
+	assert.Equal(t, "ipx00123", result.ContentID)
+	assert.Equal(t, "https://www.libredmm.com/movies/IPX-123", result.SourceURL)
+	assert.Equal(t, "Test Movie", result.Title)
+	assert.Equal(t, "Test Movie", result.OriginalTitle)
+	assert.Equal(t, "Test description", result.Description)
+	require.NotNil(t, result.ReleaseDate)
+	assert.Equal(t, "2018-03-31", result.ReleaseDate.Format("2006-01-02"))
+	assert.Equal(t, 119, result.Runtime)
+	assert.Equal(t, "ザック荒井", result.Director)
+	assert.Equal(t, "アイデアポケット", result.Maker)
+	assert.Equal(t, "ティッシュ", result.Label)
+	assert.Equal(t, "", result.Series)
+	assert.Equal(t, []string{"アナル", "単体作品"}, result.Genres)
+	require.Len(t, result.Actresses, 1)
+	assert.Equal(t, "天海つばさ", result.Actresses[0].JapaneseName)
+	assert.Equal(t, 1001592, result.Actresses[0].DMMID)
+	assert.Equal(t, "https://pics.dmm.co.jp/mono/actjpgs/amami_tubasa.jpg", result.Actresses[0].ThumbURL)
+	assert.Equal(t, payload.Cover.URL, result.CoverURL)
+	assert.Equal(t, []string{"https://pics.dmm.co.jp/digital/video/ipx00123/ipx00123jp-1.jpg"}, result.ScreenshotURL)
+	require.NotNil(t, result.Rating)
+	assert.Equal(t, 3.29, result.Rating.Score)
+	assert.Equal(t, 7, result.Rating.Votes)
+}
+
+// TestPayloadToResult_Fallbacks tests nil/empty payloads and pseudo codes
+func TestPayloadToResult_Fallbacks(t *testing.T) {
+	t.Run("nil payload uses fallback ID", func(t *testing.T) {
+		result := payloadToResult(nil, "https://www.libredmm.com", "IPX535", nil)
+		require.NotNil(t, result)
+		assert.Equal(t, "IPX535", result.ID)
+		assert.Equal(t, "IPX535", result.ContentID)
+		assert.Equal(t, "IPX535", result.Title)
+		assert.Nil(t, result.Rating)
+		assert.Equal(t, 0, result.Runtime)
+	})
+
+	t.Run("pseudo code keeps exact source URL but display ID", func(t *testing.T) {
+		result := payloadToResult(&moviePayload{Code: "SW-001~45262", Title: "x"}, "https://www.libredmm.com", "SW-001", nil)
+		assert.Equal(t, "SW-001", result.ID)
+		assert.Equal(t, "https://www.libredmm.com/movies/SW-001~45262", result.SourceURL)
+	})
+
+	t.Run("zero review not set", func(t *testing.T) {
+		result := payloadToResult(&moviePayload{Code: "A-1", Review: &reviewPayload{Average: 0, Count: 0}}, "https://www.libredmm.com", "A-1", nil)
+		assert.Nil(t, result.Rating)
+	})
+
+	t.Run("content ID falls back to first product", func(t *testing.T) {
+		result := payloadToResult(&moviePayload{Code: "A-1", Products: []productPayload{{ContentID: ""}, {ContentID: "a00001"}}}, "https://www.libredmm.com", "A-1", nil)
+		assert.Equal(t, "a00001", result.ContentID)
+	})
 }
 
 // TestResolveSearchQuery tests search query resolution
@@ -788,13 +792,13 @@ func TestResolveSearchQuery(t *testing.T) {
 		{
 			name:  "libredmm movie URL",
 			input: "https://www.libredmm.com/movies/IPX-535",
-			want:  "https://www.libredmm.com/movies/IPX-535.json",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX-535",
 			ok:    true,
 		},
 		{
 			name:  "libredmm search URL",
 			input: "https://www.libredmm.com/search?q=IPX535",
-			want:  "https://www.libredmm.com/search?q=IPX535&format=json",
+			want:  "https://www.libredmm.com/api/v1/movies/IPX535",
 			ok:    true,
 		},
 		{
@@ -847,7 +851,7 @@ func TestGetURLErrorPaths(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "plain ID returns search URL",
+			name:    "plain ID returns API URL",
 			input:   "IPX535",
 			wantErr: false,
 		},
@@ -876,46 +880,219 @@ func TestGetURLErrorPaths(t *testing.T) {
 	}
 }
 
-// TestSearchProcessingTimeout tests timeout during processing
-func TestSearchProcessingTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/search":
-			// The Search function builds search URL with the ID passed in
-			assert.Equal(t, "ZZZ-99999", r.URL.Query().Get("q"))
-			assert.Equal(t, "json", r.URL.Query().Get("format"))
-			http.Redirect(w, r, "/movies/ZZZ-99999.json", http.StatusFound)
-		case "/movies/ZZZ-99999.json":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = fmt.Fprint(w, `{"err":"still processing"}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
+// newTestScraper builds a scraper pointed at a test server with fast polling.
+func newTestScraper(t *testing.T, handler http.HandlerFunc) *Scraper {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
 
 	settings := testSettings(server.URL)
-
 	scraper := New(settings, nil, config.FlareSolverrConfig{})
-	scraper.maxPollAttempts = 2
+	scraper.maxPollAttempts = 3
 	scraper.pollInterval = 1 * time.Millisecond
+	return scraper
+}
+
+func writeJSON(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprint(w, body)
+}
+
+const testMovieJSON = `{"movie":{"code":"IPX-123","base_code":"IPX-123","pseudo_code":"IPX-123~1219","title":"Title","release_date":"2018-03-31","runtime_minutes":119,"cover":{"url":"","thumb_url":""},"sample_images":[],"actresses":[{"id":1,"name":"天海つばさ"}],"makers":[{"id":1219,"name":"Maker"}],"labels":[],"series":[{"id":9,"name":"Series"}],"directors":[],"genres":[{"id":1,"name":"Genre"}],"products":[{"content_id":"ipx00123","preferred":true}]}}`
+
+// TestSearch_Found tests a straightforward 200 response
+func TestSearch_Found(t *testing.T) {
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/movies/IPX-123", r.URL.Path)
+		writeJSON(w, http.StatusOK, testMovieJSON)
+	})
+
+	result, err := scraper.Search(context.Background(), "IPX-123")
+	require.NoError(t, err)
+	assert.Equal(t, "IPX-123", result.ID)
+	assert.Equal(t, "ipx00123", result.ContentID)
+	assert.Equal(t, "Title", result.Title)
+	assert.Equal(t, "Maker", result.Maker)
+	assert.Equal(t, "Series", result.Series)
+	assert.Equal(t, 119, result.Runtime)
+	assert.Contains(t, result.SourceURL, "/movies/IPX-123")
+}
+
+// TestSearch_PendingThenFound tests polling through 202 Accepted
+func TestSearch_PendingThenFound(t *testing.T) {
+	calls := 0
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			writeJSON(w, http.StatusAccepted, "null")
+			return
+		}
+		writeJSON(w, http.StatusOK, testMovieJSON)
+	})
+
+	result, err := scraper.Search(context.Background(), "IPX-123")
+	require.NoError(t, err)
+	assert.Equal(t, "IPX-123", result.ID)
+	assert.Equal(t, 2, calls)
+}
+
+// TestSearchProcessingTimeout tests giving up after repeated 202 responses
+func TestSearchProcessingTimeout(t *testing.T) {
+	calls := 0
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeJSON(w, http.StatusAccepted, "null")
+	})
+	scraper.maxPollAttempts = 2
 
 	result, err := scraper.Search(context.Background(), "ZZZ-99999")
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "still processing")
+	assert.Equal(t, 2, calls)
 }
 
-// TestPayloadToResultCoverURLFallback tests cover URL fallback when poster probe fails
+// TestSearch_NotFound tests problem+json 404 responses
+func TestSearch_NotFound(t *testing.T) {
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"title":"Not Found","status":404,"detail":"movie not found on Fanza; it will be looked up again later"}`)
+	})
+
+	result, err := scraper.Search(context.Background(), "ZZZ-99999")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	se, ok := models.AsScraperError(err)
+	require.True(t, ok)
+	assert.Equal(t, models.ScraperErrorKindNotFound, se.Kind)
+	assert.Contains(t, err.Error(), "looked up again later")
+}
+
+// TestSearch_ServerError tests non-404 error statuses
+func TestSearch_ServerError(t *testing.T) {
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprint(w, `{"title":"Bad Gateway","status":502,"detail":"upstream down"}`)
+	})
+
+	_, err := scraper.Search(context.Background(), "IPX-123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "502")
+	assert.Contains(t, err.Error(), "upstream down")
+}
+
+// TestSearch_HTMLResponse tests a clear error when the site returns HTML
+// (what happened when the old /search?format=json endpoint stopped working).
+func TestSearch_HTMLResponse(t *testing.T) {
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, `<!doctype html><html><head><link href="/_app/x.css"></head></html>`)
+	})
+
+	_, err := scraper.Search(context.Background(), "IPX-123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-JSON response")
+	assert.Contains(t, err.Error(), "text/html")
+}
+
+const testWorksJSON = `{"code":"SW-001","works":[` +
+	`{"code":"SW-001~45914","base_code":"SW-001","maker":"SWITCH","title":"First","release_date":"2011-01-08","thumb_url":"https://pics.dmm.co.jp/a/ps.jpg","cover_url":"https://pics.dmm.co.jp/a/pl.jpg"},` +
+	`{"code":"SW-001~45262","base_code":"SW-001","maker":"プラム","title":"Second","release_date":"2009-11-30","thumb_url":"","cover_url":"https://pics.dmm.co.jp/b/pl.jpg"}]}`
+
+// TestSearch_AmbiguousCodeUsesFirstWork tests the multi-release response
+func TestSearch_AmbiguousCodeUsesFirstWork(t *testing.T) {
+	var paths []string
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v1/movies/SW-001":
+			writeJSON(w, http.StatusOK, testWorksJSON)
+		case "/api/v1/movies/SW-001~45914":
+			writeJSON(w, http.StatusOK, `{"movie":{"code":"SW-001~45914","base_code":"SW-001","pseudo_code":"SW-001~45914","title":"First"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	result, err := scraper.Search(context.Background(), "SW-001")
+	require.NoError(t, err)
+	assert.Equal(t, "SW-001", result.ID)
+	assert.Equal(t, "First", result.Title)
+	assert.Contains(t, result.SourceURL, "/movies/SW-001~45914")
+	assert.Equal(t, []string{"/api/v1/movies/SW-001", "/api/v1/movies/SW-001~45914"}, paths)
+}
+
+// TestScrapeURL_PseudoCodePage tests scraping a picked candidate's page URL
+func TestScrapeURL_PseudoCodePage(t *testing.T) {
+	var gotPath string
+	scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		writeJSON(w, http.StatusOK, `{"movie":{"code":"SW-001~45262","base_code":"SW-001","title":"Second"}}`)
+	})
+
+	result, err := scraper.ScrapeURL(context.Background(), "https://www.libredmm.com/movies/SW-001~45262")
+	require.NoError(t, err)
+	assert.Equal(t, "/api/v1/movies/SW-001~45262", gotPath)
+	assert.Equal(t, "SW-001", result.ID)
+	assert.Equal(t, "Second", result.Title)
+}
+
+// TestSearchCandidates tests the manual-search candidate picker integration
+func TestSearchCandidates(t *testing.T) {
+	t.Run("ambiguous code lists every release", func(t *testing.T) {
+		scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, testWorksJSON)
+		})
+
+		candidates, err := scraper.SearchCandidates(context.Background(), "SW-001")
+		require.NoError(t, err)
+		require.Len(t, candidates, 2)
+		assert.Equal(t, "SW-001", candidates[0].ID)
+		assert.Equal(t, "[SWITCH] First", candidates[0].Title)
+		assert.Equal(t, "https://pics.dmm.co.jp/a/ps.jpg", candidates[0].CoverURL)
+		assert.Equal(t, scraper.baseURL+"/movies/SW-001~45914", candidates[0].DetailURL)
+		assert.Equal(t, "libredmm", candidates[0].Source)
+		assert.Equal(t, "https://pics.dmm.co.jp/b/pl.jpg", candidates[1].CoverURL)
+	})
+
+	t.Run("single movie returns one candidate", func(t *testing.T) {
+		scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, testMovieJSON)
+		})
+
+		candidates, err := scraper.SearchCandidates(context.Background(), "IPX-123")
+		require.NoError(t, err)
+		require.Len(t, candidates, 1)
+		assert.Equal(t, "IPX-123", candidates[0].ID)
+		assert.Equal(t, scraper.baseURL+"/movies/IPX-123", candidates[0].DetailURL)
+	})
+
+	t.Run("not found returns no candidates and no error", func(t *testing.T) {
+		scraper := newTestScraper(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusNotFound, `{"title":"Not Found","status":404,"detail":"movie not found"}`)
+		})
+
+		candidates, err := scraper.SearchCandidates(context.Background(), "NOPE-1")
+		require.NoError(t, err)
+		assert.Empty(t, candidates)
+	})
+}
+
+// TestPayloadToResult_CoverURLFallback tests cover URL fallback when poster probe fails
 func TestPayloadToResult_CoverURLFallback(t *testing.T) {
 	coverURL := "https://pics.dmm.co.jp/digital/video/118abp00880/118abp00880pl.jpg"
 	payload := &moviePayload{
-		CoverImageURL:     coverURL,
-		ThumbnailImageURL: "https://pics.dmm.co.jp/digital/video/118abp00880/118abp00880ps.jpg",
-		NormalizedID:      "ABP-880",
-		Subtitle:          "118abp880",
-		Title:             "Movie Title",
+		Code:     "ABP-880",
+		BaseCode: "ABP-880",
+		Title:    "Movie Title",
+		Cover: coverPayload{
+			URL:      coverURL,
+			ThumbURL: "https://pics.dmm.co.jp/digital/video/118abp00880/118abp00880ps.jpg",
+		},
+		Products: []productPayload{{ContentID: "118abp880", Preferred: true}},
 	}
 
 	// Force poster probe to fail immediately
@@ -925,42 +1102,10 @@ func TestPayloadToResult_CoverURLFallback(t *testing.T) {
 		}),
 	}
 
-	result := payloadToResult(payload, "https://www.libredmm.com/movies/ABP-880.json", "ABP-880", client)
+	result := payloadToResult(payload, "https://www.libredmm.com", "ABP-880", client)
 	require.NotNil(t, result)
 	assert.Equal(t, coverURL, result.CoverURL)
 	assert.Equal(t, coverURL, result.PosterURL)
-}
-
-// TestStripJSONSuffix tests JSON suffix stripping
-func TestStripJSONSuffix(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "JSON suffix removed",
-			input: "https://www.libredmm.com/movies/IPX-535.json",
-			want:  "https://www.libredmm.com/movies/IPX-535",
-		},
-		{
-			name:  "no JSON suffix unchanged",
-			input: "https://www.libredmm.com/movies/IPX-535",
-			want:  "https://www.libredmm.com/movies/IPX-535",
-		},
-		{
-			name:  "JSON in filename not removed",
-			input: "https://example.com/movies.JSON/file.json",
-			want:  "https://example.com/movies.JSON/file",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := stripJSONSuffix(tt.input)
-			assert.Equal(t, tt.want, result)
-		})
-	}
 }
 
 // TestNormalizeLibredmmScreenshotURL_DMMHosts tests DMM screenshot normalization

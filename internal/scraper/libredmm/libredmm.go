@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,15 +26,22 @@ import (
 
 const (
 	defaultBaseURL      = "https://www.libredmm.com"
-	defaultPollAttempts = 4
+	defaultPollAttempts = 6
 	defaultPollInterval = 1500 * time.Millisecond
+	// maxPollInterval caps the server-provided Retry-After delay between polls
+	// of a movie LibreDMM is still fetching (202 Accepted).
+	maxPollInterval = 5 * time.Second
+	// movieAPIPath is LibreDMM's JSON lookup endpoint: GET {base}/api/v1/movies/{code}.
+	// {code} may be a display code (IPX-123), a DMM content ID (ipx00123) or a
+	// pseudo code (SW-001~45262) that selects one release of an ambiguous code.
+	movieAPIPath = "/api/v1/movies/"
 )
 
 var (
 	cidRegex                 = regexp.MustCompile(`(?i)(?:^|[?&])(cid|id)=([^&]+)`)
 	dmmPrefixedCIDRegex      = regexp.MustCompile(`^(\d{3,}[a-z]+)0+(\d+.*)$`)
 	dmmSampleFilenamePattern = regexp.MustCompile(`(?i)\.jpe?g$`)
-	// URL extraction pattern
+	// URL extraction pattern (matches /movies/{id} and /api/v1/movies/{id})
 	libreDMPathRegex = regexp.MustCompile(`/movies/([^/?&]+)`)
 	// ANSI escape sequence pattern for stripping terminal color codes
 	ansiEscapeRegex = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
@@ -44,29 +53,94 @@ var (
 	controlCharRegex = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
 )
 
+// namedEntity is the {id, name} shape LibreDMM uses for makers, labels,
+// series, directors and genres.
+type namedEntity struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
 type actressPayload struct {
+	ID       int    `json:"id"`
 	Name     string `json:"name"`
+	Ruby     string `json:"ruby"`
 	ImageURL string `json:"image_url"`
 }
 
+type coverPayload struct {
+	URL      string `json:"url"`
+	ThumbURL string `json:"thumb_url"`
+}
+
+type reviewPayload struct {
+	Average float64 `json:"average"`
+	Count   int     `json:"count"`
+}
+
+type productPayload struct {
+	ContentID string `json:"content_id"`
+	Service   string `json:"service"`
+	Floor     string `json:"floor"`
+	URL       string `json:"url"`
+	Preferred bool   `json:"preferred"`
+}
+
+// moviePayload is the "movie" object of a LibreDMM /api/v1/movies/{code} response.
 type moviePayload struct {
-	Err               string           `json:"err"`
-	Actresses         []actressPayload `json:"actresses"`
-	CoverImageURL     string           `json:"cover_image_url"`
-	Date              string           `json:"date"`
-	Description       string           `json:"description"`
-	Directors         []string         `json:"directors"`
-	Genres            []string         `json:"genres"`
-	Labels            []string         `json:"labels"`
-	Makers            []string         `json:"makers"`
-	NormalizedID      string           `json:"normalized_id"`
-	Review            float64          `json:"review"`
-	Subtitle          string           `json:"subtitle"`
-	ThumbnailImageURL string           `json:"thumbnail_image_url"`
-	Title             string           `json:"title"`
-	URL               string           `json:"url"`
-	Volume            int              `json:"volume"`
-	SampleImageURLs   []string         `json:"sample_image_urls"`
+	Code           string           `json:"code"`
+	BaseCode       string           `json:"base_code"`
+	PseudoCode     string           `json:"pseudo_code"`
+	Title          string           `json:"title"`
+	ReleaseDate    string           `json:"release_date"`
+	RuntimeMinutes int              `json:"runtime_minutes"`
+	Description    string           `json:"description"`
+	Cover          coverPayload     `json:"cover"`
+	SampleImages   []string         `json:"sample_images"`
+	Review         *reviewPayload   `json:"review"`
+	Actresses      []actressPayload `json:"actresses"`
+	Makers         []namedEntity    `json:"makers"`
+	Labels         []namedEntity    `json:"labels"`
+	Series         []namedEntity    `json:"series"`
+	Directors      []namedEntity    `json:"directors"`
+	Genres         []namedEntity    `json:"genres"`
+	Products       []productPayload `json:"products"`
+}
+
+// workPayload is one release in an ambiguous-code response. Its Code is a
+// pseudo code (e.g. "SW-001~45262") that can be looked up on its own.
+type workPayload struct {
+	Code        string `json:"code"`
+	BaseCode    string `json:"base_code"`
+	Maker       string `json:"maker"`
+	Title       string `json:"title"`
+	ReleaseDate string `json:"release_date"`
+	ThumbURL    string `json:"thumb_url"`
+	CoverURL    string `json:"cover_url"`
+}
+
+// apiResponse covers every body shape the movies endpoint returns:
+//   - 200 {"movie": {...}}                    — single match
+//   - 200 {"code": "...", "works": [...]}     — code shared by several releases
+//   - 202 null                                — lookup in progress, retry later
+//   - 4xx/5xx application/problem+json        — {"title", "status", "detail"}
+type apiResponse struct {
+	Movie *moviePayload `json:"movie"`
+	Code  string        `json:"code"`
+	Works []workPayload `json:"works"`
+
+	// RFC 7807 problem fields (error responses only)
+	ProblemTitle string `json:"title"`
+	Detail       string `json:"detail"`
+}
+
+func (r *apiResponse) problem() string {
+	if r == nil {
+		return ""
+	}
+	if msg := scraperutil.CleanString(r.Detail); msg != "" {
+		return msg
+	}
+	return scraperutil.CleanString(r.ProblemTitle)
 }
 
 // Scraper implements the LibreDMM scraper.
@@ -156,10 +230,11 @@ func (s *Scraper) ExtractIDFromURL(urlStr string) (string, error) {
 		return q, nil
 	}
 
-	// Extract from /movies/{id}, /movies/{id}.json, or /cid/{id} path
+	// Extract from /movies/{id}, /movies/{id}.json, /api/v1/movies/{id}
 	matches := libreDMPathRegex.FindStringSubmatch(u.Path)
 	if len(matches) > 1 {
-		return strings.TrimSuffix(matches[1], ".json"), nil
+		id, _ := url.PathUnescape(matches[1])
+		return strings.TrimSuffix(id, ".json"), nil
 	}
 
 	// Check for /cid/{id} format (case-insensitive)
@@ -175,6 +250,7 @@ func (s *Scraper) ExtractIDFromURL(urlStr string) (string, error) {
 	return "", fmt.Errorf("failed to extract ID from LibreDMM URL")
 }
 
+// ScrapeURL scrapes a LibreDMM movie page URL (or API URL) directly.
 func (s *Scraper) ScrapeURL(ctx context.Context, urlStr string) (*models.ScraperResult, error) {
 	if !s.CanHandleURL(urlStr) {
 		return nil, models.NewScraperNotFoundError("LibreDMM", "URL not handled by LibreDMM scraper")
@@ -189,84 +265,15 @@ func (s *Scraper) ScrapeURL(ctx context.Context, urlStr string) (*models.Scraper
 		return nil, fmt.Errorf("failed to extract ID from URL: %w", err)
 	}
 
-	var targetURL string
-	if normalized, ok := normalizeMovieURL(urlStr, s.baseURL); ok {
-		targetURL = normalized
-	} else {
+	targetURL, ok := normalizeMovieURL(urlStr, s.baseURL)
+	if !ok {
 		targetURL, err = s.getURLCtx(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("failed to normalize URL: %w", err)
 		}
 	}
 
-	attempts := s.maxPollAttempts
-	if attempts < 1 {
-		attempts = 1
-	}
-
-	for attempt := 1; attempt <= attempts; attempt++ {
-		payload, finalURL, status, err := s.fetchMovieJSONCtx(ctx, targetURL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query LibreDMM: %w", err)
-		}
-		if finalURL != "" {
-			targetURL = finalURL
-		}
-
-		switch status {
-		case 200:
-			if msg := scraperutil.CleanString(payload.Err); msg != "" {
-				return nil, fmt.Errorf("LibreDMM returned error: %s", msg)
-			}
-			result := payloadToResult(payload, targetURL, id, s.client.GetClient())
-			s.filterPlaceholderScreenshotsCtx(ctx, result)
-			return result, nil
-		case 202:
-			msg := scraperutil.CleanString(payload.Err)
-			if msg == "" {
-				msg = "processing"
-			}
-			if attempt == attempts {
-				return nil, fmt.Errorf("LibreDMM is still %s for %s", msg, id)
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(s.pollInterval):
-			}
-		case 404:
-			return nil, models.NewScraperNotFoundError("LibreDMM", fmt.Sprintf("movie %s not found on LibreDMM", id))
-		case 502:
-			msg := scraperutil.CleanString(payload.Err)
-			if msg != "" {
-				return nil, models.NewScraperStatusError(
-					"LibreDMM",
-					502,
-					fmt.Sprintf("LibreDMM is temporarily unavailable (HTTP 502 Bad Gateway; host may be down): %s", msg),
-				)
-			}
-			return nil, models.NewScraperStatusError(
-				"LibreDMM",
-				502,
-				"LibreDMM is temporarily unavailable (HTTP 502 Bad Gateway; host may be down)",
-			)
-		default:
-			if msg := scraperutil.CleanString(payload.Err); msg != "" {
-				return nil, models.NewScraperStatusError(
-					"LibreDMM",
-					status,
-					fmt.Sprintf("LibreDMM returned status code %d: %s", status, msg),
-				)
-			}
-			return nil, models.NewScraperStatusError(
-				"LibreDMM",
-				status,
-				fmt.Sprintf("LibreDMM returned status code %d", status),
-			)
-		}
-	}
-
-	return nil, models.NewScraperNotFoundError("LibreDMM", fmt.Sprintf("movie %s not found on LibreDMM", id))
+	return s.lookupCtx(ctx, targetURL, id)
 }
 
 // ResolveDownloadProxyForHost declares LibreDMM-owned media hosts for downloader proxy routing.
@@ -290,11 +297,12 @@ func (s *Scraper) ResolveSearchQuery(input string) (string, bool) {
 	return normalized, true
 }
 
+// GetURL returns the LibreDMM API URL used to look up the given movie ID.
 func (s *Scraper) GetURL(id string) (string, error) {
 	return s.getURLCtx(context.Background(), id)
 }
 
-func (s *Scraper) getURLCtx(ctx context.Context, id string) (string, error) {
+func (s *Scraper) getURLCtx(_ context.Context, id string) (string, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return "", fmt.Errorf("movie ID cannot be empty")
@@ -306,14 +314,14 @@ func (s *Scraper) getURLCtx(ctx context.Context, id string) (string, error) {
 
 	if scraperutil.IsHTTPURL(id) {
 		if extracted := extractIDFromURL(id); extracted != "" {
-			return buildSearchURL(s.baseURL, extracted), nil
+			return buildAPIURL(s.baseURL, extracted), nil
 		}
 	}
 
-	return buildSearchURL(s.baseURL, id), nil
+	return buildAPIURL(s.baseURL, id), nil
 }
 
-// Search scrapes metadata from LibreDMM JSON endpoints.
+// Search scrapes metadata from the LibreDMM JSON API.
 func (s *Scraper) Search(ctx context.Context, id string) (*models.ScraperResult, error) {
 	if !s.enabled {
 		return nil, fmt.Errorf("LibreDMM scraper is disabled")
@@ -324,111 +332,194 @@ func (s *Scraper) Search(ctx context.Context, id string) (*models.ScraperResult,
 		return nil, err
 	}
 
+	return s.lookupCtx(ctx, targetURL, id)
+}
+
+// SearchCandidates implements models.CandidateSearcher. When a code is shared
+// by several releases (different makers reusing the same code), every release
+// is returned so the user can pick the right one in the manual-search picker.
+func (s *Scraper) SearchCandidates(ctx context.Context, query string) ([]*models.SearchCandidate, error) {
+	if !s.enabled {
+		return nil, fmt.Errorf("LibreDMM scraper is disabled")
+	}
+
+	targetURL, err := s.getURLCtx(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.pollMovieCtx(ctx, targetURL, query)
+	if err != nil {
+		if se, ok := models.AsScraperError(err); ok && se.Kind == models.ScraperErrorKindNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if resp.Movie != nil {
+		m := resp.Movie
+		code := firstNonEmptyString(m.Code, m.PseudoCode, query)
+		return []*models.SearchCandidate{{
+			ID:        movieDisplayID(m.BaseCode, code),
+			Title:     scraperutil.CleanString(m.Title),
+			CoverURL:  firstNonEmptyString(m.Cover.ThumbURL, m.Cover.URL),
+			DetailURL: buildPageURL(s.baseURL, code),
+			Source:    s.Name(),
+		}}, nil
+	}
+
+	candidates := make([]*models.SearchCandidate, 0, len(resp.Works))
+	for _, w := range resp.Works {
+		code := scraperutil.CleanString(w.Code)
+		if code == "" {
+			continue
+		}
+		title := scraperutil.CleanString(w.Title)
+		if maker := scraperutil.CleanString(w.Maker); maker != "" {
+			title = fmt.Sprintf("[%s] %s", maker, title)
+		}
+		candidates = append(candidates, &models.SearchCandidate{
+			ID:        movieDisplayID(w.BaseCode, code),
+			Title:     title,
+			CoverURL:  firstNonEmptyString(w.ThumbURL, w.CoverURL),
+			DetailURL: buildPageURL(s.baseURL, code),
+			Source:    s.Name(),
+		})
+	}
+	return candidates, nil
+}
+
+// lookupCtx fetches a movie from the API and converts it to a ScraperResult.
+// If the code is ambiguous, the first listed release is used.
+func (s *Scraper) lookupCtx(ctx context.Context, targetURL, id string) (*models.ScraperResult, error) {
+	resp, err := s.pollMovieCtx(ctx, targetURL, id)
+	if err != nil {
+		return nil, err
+	}
+
+	movie := resp.Movie
+	if movie == nil && len(resp.Works) > 0 {
+		chosen := resp.Works[0]
+		logging.Infof("LibreDMM: %s matches %d releases; using %s (%s, %s). Use manual search to pick a different one.",
+			id, len(resp.Works), chosen.Code, scraperutil.CleanString(chosen.Maker), chosen.ReleaseDate)
+
+		workResp, err := s.pollMovieCtx(ctx, buildAPIURL(s.baseURL, chosen.Code), id)
+		if err != nil {
+			return nil, err
+		}
+		movie = workResp.Movie
+	}
+
+	if movie == nil {
+		return nil, models.NewScraperNotFoundError("LibreDMM", fmt.Sprintf("movie %s not found on LibreDMM", id))
+	}
+
+	result := payloadToResult(movie, s.baseURL, id, s.client.GetClient())
+	s.filterPlaceholderScreenshotsCtx(ctx, result)
+	return result, nil
+}
+
+// pollMovieCtx requests the movie API, retrying while LibreDMM answers
+// 202 Accepted (it is fetching a movie it has not seen yet).
+func (s *Scraper) pollMovieCtx(ctx context.Context, targetURL, id string) (*apiResponse, error) {
 	attempts := s.maxPollAttempts
 	if attempts < 1 {
 		attempts = 1
 	}
 
 	for attempt := 1; attempt <= attempts; attempt++ {
-		payload, finalURL, status, err := s.fetchMovieJSONCtx(ctx, targetURL)
+		resp, status, retryAfter, err := s.fetchMovieJSONCtx(ctx, targetURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query LibreDMM: %w", err)
 		}
-		if finalURL != "" {
-			targetURL = finalURL
-		}
 
-		switch status {
-		case 200:
-			if msg := scraperutil.CleanString(payload.Err); msg != "" {
-				return nil, fmt.Errorf("LibreDMM returned error: %s", msg)
-			}
-			result := payloadToResult(payload, targetURL, id, s.client.GetClient())
-			s.filterPlaceholderScreenshotsCtx(ctx, result)
-			return result, nil
-		case 202:
-			msg := scraperutil.CleanString(payload.Err)
-			if msg == "" {
-				msg = "processing"
-			}
+		switch {
+		case status == http.StatusOK:
+			return resp, nil
+		case status == http.StatusAccepted:
 			if attempt == attempts {
-				return nil, fmt.Errorf("LibreDMM is still %s for %s", msg, id)
+				return nil, models.NewScraperStatusError(
+					"LibreDMM",
+					status,
+					fmt.Sprintf("LibreDMM is still processing %s; try again in a minute", id),
+				)
 			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(s.pollInterval):
+			case <-time.After(pollDelay(retryAfter, s.pollInterval)):
 			}
-		case 404:
-			return nil, models.NewScraperNotFoundError("LibreDMM", fmt.Sprintf("movie %s not found on LibreDMM", id))
-		case 502:
-			msg := scraperutil.CleanString(payload.Err)
-			if msg != "" {
-				return nil, models.NewScraperStatusError(
-					"LibreDMM",
-					502,
-					fmt.Sprintf("LibreDMM is temporarily unavailable (HTTP 502 Bad Gateway; host may be down): %s", msg),
-				)
+		case status == http.StatusNotFound:
+			msg := fmt.Sprintf("movie %s not found on LibreDMM", id)
+			if detail := resp.problem(); detail != "" {
+				msg = fmt.Sprintf("%s (%s)", msg, detail)
 			}
-			return nil, models.NewScraperStatusError(
-				"LibreDMM",
-				502,
-				"LibreDMM is temporarily unavailable (HTTP 502 Bad Gateway; host may be down)",
-			)
+			return nil, models.NewScraperNotFoundError("LibreDMM", msg)
+		case status == http.StatusBadGateway:
+			msg := "LibreDMM is temporarily unavailable (HTTP 502 Bad Gateway; host may be down)"
+			if detail := resp.problem(); detail != "" {
+				msg += ": " + detail
+			}
+			return nil, models.NewScraperStatusError("LibreDMM", status, msg)
 		default:
-			if msg := scraperutil.CleanString(payload.Err); msg != "" {
-				return nil, models.NewScraperStatusError(
-					"LibreDMM",
-					status,
-					fmt.Sprintf("LibreDMM returned status code %d: %s", status, msg),
-				)
+			msg := fmt.Sprintf("LibreDMM returned status code %d", status)
+			if detail := resp.problem(); detail != "" {
+				msg += ": " + detail
 			}
-			return nil, models.NewScraperStatusError(
-				"LibreDMM",
-				status,
-				fmt.Sprintf("LibreDMM returned status code %d", status),
-			)
+			return nil, models.NewScraperStatusError("LibreDMM", status, msg)
 		}
 	}
 
 	return nil, models.NewScraperNotFoundError("LibreDMM", fmt.Sprintf("movie %s not found on LibreDMM", id))
 }
 
-func (s *Scraper) fetchMovieJSONCtx(ctx context.Context, targetURL string) (*moviePayload, string, int, error) {
+// fetchMovieJSONCtx performs one API request. It returns the decoded body
+// (never nil), the HTTP status and the raw Retry-After header.
+func (s *Scraper) fetchMovieJSONCtx(ctx context.Context, targetURL string) (*apiResponse, int, string, error) {
 	if err := s.rateLimiter.Wait(ctx); err != nil {
-		return nil, "", 0, err
+		return nil, 0, "", err
 	}
 
 	resp, err := s.client.R().SetContext(ctx).Get(targetURL)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, 0, "", err
 	}
 
-	payload := &moviePayload{}
+	status := resp.StatusCode()
+	payload := &apiResponse{}
 	body := resp.Body()
 	if len(body) > 0 {
 		// Strip ANSI escape codes and control characters before JSON parsing.
 		// These can appear in responses from proxies or terminal wrappers.
 		cleanBody := stripANSICodes(string(body))
-		if err := json.Unmarshal([]byte(cleanBody), payload); err != nil && resp.StatusCode() == 200 {
-			return nil, "", resp.StatusCode(), fmt.Errorf("failed to parse JSON response: %w", err)
+		if err := json.Unmarshal([]byte(cleanBody), payload); err != nil {
+			if status == http.StatusOK {
+				return nil, status, "", fmt.Errorf(
+					"LibreDMM returned a non-JSON response (content-type %q) from %s; the site's API may have changed: %w",
+					resp.Header().Get("Content-Type"), targetURL, err)
+			}
+			payload = &apiResponse{}
 		}
 	}
 
-	finalURL := targetURL
-	if raw := resp.RawResponse; raw != nil && raw.Request != nil && raw.Request.URL != nil {
-		finalURL = raw.Request.URL.String()
-	}
-
-	// Once redirected to a movie page, keep polling that canonical endpoint.
-	if canonical, ok := normalizeMovieURL(finalURL, s.baseURL); ok && strings.Contains(canonical, "/movies/") {
-		finalURL = canonical
-	}
-
-	return payload, finalURL, resp.StatusCode(), nil
+	return payload, status, resp.Header().Get("Retry-After"), nil
 }
 
-func payloadToResult(payload *moviePayload, sourceURL, fallbackID string, client *http.Client) *models.ScraperResult {
+// pollDelay honours a delta-seconds Retry-After header, capped at
+// maxPollInterval, and otherwise falls back to the configured interval.
+func pollDelay(retryAfter string, fallback time.Duration) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(retryAfter))
+	if err != nil || secs <= 0 {
+		return fallback
+	}
+	d := time.Duration(secs) * time.Second
+	if d > maxPollInterval {
+		d = maxPollInterval
+	}
+	return d
+}
+
+func payloadToResult(payload *moviePayload, baseURL, fallbackID string, client *http.Client) *models.ScraperResult {
 	result := &models.ScraperResult{
 		Source:   "libredmm",
 		Language: "ja",
@@ -438,22 +529,23 @@ func payloadToResult(payload *moviePayload, sourceURL, fallbackID string, client
 		payload = &moviePayload{}
 	}
 
-	source := scraperutil.CleanString(payload.URL)
-	if source == "" {
-		source = stripJSONSuffix(sourceURL)
-	}
-	result.SourceURL = source
+	code := firstNonEmptyString(payload.Code, payload.PseudoCode)
 
-	id := scraperutil.CleanString(payload.NormalizedID)
+	id := movieDisplayID(payload.BaseCode, code)
 	if id == "" {
-		id = scraperutil.CleanString(extractIDFromURL(sourceURL))
-	}
-	if id == "" {
-		id = scraperutil.CleanString(fallbackID)
+		id = movieDisplayID("", fallbackID)
 	}
 	result.ID = id
 
-	contentID := scraperutil.CleanString(payload.Subtitle)
+	pageCode := code
+	if pageCode == "" {
+		pageCode = id
+	}
+	if pageCode != "" {
+		result.SourceURL = buildPageURL(baseURL, pageCode)
+	}
+
+	contentID := preferredContentID(payload.Products)
 	if contentID == "" {
 		contentID = id
 	}
@@ -467,21 +559,22 @@ func payloadToResult(payload *moviePayload, sourceURL, fallbackID string, client
 	result.OriginalTitle = title
 	result.Description = scraperutil.CleanString(payload.Description)
 
-	if t := parseReleaseDate(payload.Date); t != nil {
+	if t := parseReleaseDate(payload.ReleaseDate); t != nil {
 		result.ReleaseDate = t
 	}
-	if payload.Volume > 0 {
-		result.Runtime = payload.Volume / 60
+	if payload.RuntimeMinutes > 0 {
+		result.Runtime = payload.RuntimeMinutes
 	}
 
-	result.Director = firstNonEmpty(payload.Directors)
-	result.Maker = firstNonEmpty(payload.Makers)
-	result.Label = firstNonEmpty(payload.Labels)
-	result.Genres = dedupeStrings(payload.Genres)
-	result.Actresses = parseActresses(payload.Actresses, sourceURL)
+	result.Director = firstEntityName(payload.Directors)
+	result.Maker = firstEntityName(payload.Makers)
+	result.Label = firstEntityName(payload.Labels)
+	result.Series = firstEntityName(payload.Series)
+	result.Genres = dedupeStrings(entityNames(payload.Genres))
+	result.Actresses = parseActresses(payload.Actresses, result.SourceURL)
 
-	result.CoverURL = scraperutil.ResolveURL(sourceURL, payload.CoverImageURL)
-	result.PosterURL = scraperutil.ResolveURL(sourceURL, payload.ThumbnailImageURL)
+	result.CoverURL = toHTTPS(scraperutil.ResolveURL(result.SourceURL, payload.Cover.URL))
+	result.PosterURL = toHTTPS(scraperutil.ResolveURL(result.SourceURL, payload.Cover.ThumbURL))
 	if result.CoverURL != "" {
 		posterURL, shouldCrop := imageutil.GetOptimalPosterURL(result.CoverURL, client)
 		result.ShouldCropPoster = shouldCrop
@@ -494,15 +587,48 @@ func payloadToResult(payload *moviePayload, sourceURL, fallbackID string, client
 	if result.PosterURL == "" {
 		result.PosterURL = result.CoverURL
 	}
-	result.ScreenshotURL = dedupeResolvedURLs(payload.SampleImageURLs, sourceURL)
+	result.ScreenshotURL = dedupeResolvedURLs(payload.SampleImages, result.SourceURL)
 
-	if payload.Review > 0 {
+	if payload.Review != nil && payload.Review.Average > 0 {
 		result.Rating = &models.Rating{
-			Score: payload.Review,
+			Score: math.Round(payload.Review.Average*100) / 100,
+			Votes: payload.Review.Count,
 		}
 	}
 
 	return result
+}
+
+// movieDisplayID returns the display ID for a movie: the base code when known,
+// otherwise the code with any "~anchor" pseudo-code suffix removed.
+func movieDisplayID(baseCode, code string) string {
+	if id := scraperutil.CleanString(baseCode); id != "" {
+		return id
+	}
+	code = scraperutil.CleanString(code)
+	if idx := strings.Index(code, "~"); idx > 0 {
+		code = code[:idx]
+	}
+	return code
+}
+
+// preferredContentID returns the DMM content ID of the preferred product,
+// falling back to the first product that has one.
+func preferredContentID(products []productPayload) string {
+	fallback := ""
+	for _, p := range products {
+		cid := scraperutil.CleanString(p.ContentID)
+		if cid == "" {
+			continue
+		}
+		if p.Preferred {
+			return cid
+		}
+		if fallback == "" {
+			fallback = cid
+		}
+	}
+	return fallback
 }
 
 func parseReleaseDate(raw string) *time.Time {
@@ -537,6 +663,7 @@ func parseActresses(entries []actressPayload, base string) []models.ActressInfo 
 		seen[name] = true
 
 		info := models.ActressInfo{
+			DMMID:    actress.ID,
 			ThumbURL: toHTTPS(scraperutil.ResolveURL(base, actress.ImageURL)),
 		}
 		if scraperutil.HasJapanese(name) {
@@ -599,6 +726,24 @@ func firstNonEmpty(values []string) string {
 	return ""
 }
 
+func firstNonEmptyString(values ...string) string {
+	return firstNonEmpty(values)
+}
+
+func entityNames(entities []namedEntity) []string {
+	out := make([]string, 0, len(entities))
+	for _, e := range entities {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
+func firstEntityName(entities []namedEntity) string {
+	return firstNonEmpty(entityNames(entities))
+}
+
+// normalizeMovieURL converts any recognised LibreDMM URL (movie page, legacy
+// .json page, /cid/ page, /search?q= page or API URL) into its API URL.
 func normalizeMovieURL(raw, base string) (string, bool) {
 	if !scraperutil.IsHTTPURL(raw) {
 		return "", false
@@ -615,37 +760,37 @@ func normalizeMovieURL(raw, base string) (string, bool) {
 
 	queryID := scraperutil.CleanString(parsed.Query().Get("q"))
 	if queryID != "" && strings.Contains(strings.ToLower(parsed.Path), "/search") {
-		return buildSearchURL(base, queryID), true
+		return buildAPIURL(base, queryID), true
 	}
 
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) >= 2 {
-		if strings.EqualFold(parts[0], "movies") {
-			id, _ := url.PathUnescape(parts[1])
-			id = strings.TrimSuffix(id, ".json")
-			id = scraperutil.CleanString(id)
-			if id == "" {
-				return "", false
-			}
-			return strings.TrimRight(base, "/") + "/movies/" + url.PathEscape(id) + ".json", true
+	// Strip the API prefix so /api/v1/movies/{id} is handled like /movies/{id}.
+	if len(parts) >= 4 && strings.EqualFold(parts[0], "api") && strings.EqualFold(parts[2], "movies") {
+		parts = parts[2:]
+	}
+	if len(parts) >= 2 && (strings.EqualFold(parts[0], "movies") || strings.EqualFold(parts[0], "cid")) {
+		id, _ := url.PathUnescape(parts[1])
+		id = strings.TrimSuffix(id, ".json")
+		id = scraperutil.CleanString(id)
+		if id == "" {
+			return "", false
 		}
-		if strings.EqualFold(parts[0], "cid") {
-			id, _ := url.PathUnescape(parts[1])
-			id = strings.TrimSuffix(id, ".json")
-			id = scraperutil.CleanString(id)
-			if id == "" {
-				return "", false
-			}
-			return strings.TrimRight(base, "/") + "/movies/" + url.PathEscape(id) + ".json", true
-		}
+		return buildAPIURL(base, id), true
 	}
 
 	return "", false
 }
 
-func buildSearchURL(baseURL, query string) string {
+// buildAPIURL returns the JSON API URL for a movie code.
+func buildAPIURL(baseURL, code string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	return fmt.Sprintf("%s/search?q=%s&format=json", baseURL, url.QueryEscape(strings.TrimSpace(query)))
+	return baseURL + movieAPIPath + url.PathEscape(strings.TrimSpace(code))
+}
+
+// buildPageURL returns the human-facing movie page URL for a movie code.
+func buildPageURL(baseURL, code string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return baseURL + "/movies/" + url.PathEscape(strings.TrimSpace(code))
 }
 
 func extractIDFromURL(raw string) string {
@@ -666,12 +811,11 @@ func extractIDFromURL(raw string) string {
 	}
 
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) >= 4 && strings.EqualFold(parts[0], "api") && strings.EqualFold(parts[2], "movies") {
+		parts = parts[2:]
+	}
 	if len(parts) >= 2 {
-		if strings.EqualFold(parts[0], "movies") {
-			id, _ := url.PathUnescape(parts[1])
-			return strings.TrimSpace(strings.TrimSuffix(id, ".json"))
-		}
-		if strings.EqualFold(parts[0], "cid") {
+		if strings.EqualFold(parts[0], "movies") || strings.EqualFold(parts[0], "cid") {
 			id, _ := url.PathUnescape(parts[1])
 			return strings.TrimSpace(strings.TrimSuffix(id, ".json"))
 		}
@@ -768,15 +912,6 @@ func canonicalizeDMMPrefixedContentID(seg string) string {
 	return seg + suffix + ext
 }
 
-func stripJSONSuffix(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return strings.TrimSuffix(raw, ".json")
-	}
-	parsed.Path = strings.TrimSuffix(parsed.Path, ".json")
-	return parsed.String()
-}
-
 func toHTTPS(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if strings.HasPrefix(raw, "http://") {
@@ -797,10 +932,10 @@ func stripANSICodes(s string) string {
 	// Finally strip other control characters (except tab, newline, CR)
 	s = controlCharRegex.ReplaceAllString(s, "")
 
-	// If the string doesn't start with valid JSON characters,
+	// If the string doesn't start with valid JSON (object, array or null),
 	// try to find the start of the JSON content
 	s = strings.TrimSpace(s)
-	if len(s) > 0 && s[0] != '{' && s[0] != '[' {
+	if len(s) > 0 && s[0] != '{' && s[0] != '[' && !strings.HasPrefix(s, "null") {
 		// Find the first '{' or '[' which should be the start of JSON
 		for i, c := range s {
 			if c == '{' || c == '[' {
